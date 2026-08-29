@@ -25,31 +25,14 @@ pub fn find_plugin_wasm(arg: &str) -> Option<PathBuf> {
         return Some(direct_path);
     }
 
-    let mut search_dirs = Vec::new();
+    let mut search_dirs = xtools_runtime::plugin_search_dirs();
 
-    // 1. Plugins relative to executable
+    // Also allow wasm files placed directly next to the executable
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
-            search_dirs.push(parent.join("plugins"));
-            search_dirs.push(parent.to_path_buf());
+            search_dirs.insert(1, parent.to_path_buf());
         }
     }
-
-    // 2. Current working directory & dev paths
-    search_dirs.push(PathBuf::from("plugins"));
-    search_dirs.push(PathBuf::from("wasm/dist/plugins"));
-    search_dirs.push(PathBuf::from("dist/plugins"));
-    search_dirs.push(PathBuf::from("wasm/target/wasm32-unknown-unknown/release"));
-    search_dirs.push(PathBuf::from("target/wasm32-unknown-unknown/release"));
-
-    // 3. User data directory
-    if let Some(data) = dirs::data_dir() {
-        search_dirs.push(data.join("xtools").join("plugins"));
-    }
-
-    // 4. System directories
-    search_dirs.push(PathBuf::from("/usr/share/xtools/plugins"));
-    search_dirs.push(PathBuf::from("/usr/local/share/xtools/plugins"));
 
     let clean_name = arg
         .trim_start_matches("xtools.")
@@ -77,28 +60,19 @@ pub fn find_plugin_wasm(arg: &str) -> Option<PathBuf> {
 
 pub fn list_plugins() {
     let loader = PluginLoader::new();
-    let mut search_dirs = Vec::new();
+    let search_dirs = xtools_runtime::plugin_search_dirs();
 
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            search_dirs.push(parent.join("plugins"));
-        }
-    }
-    search_dirs.push(PathBuf::from("plugins"));
-    search_dirs.push(PathBuf::from("wasm/dist/plugins"));
-    search_dirs.push(PathBuf::from("dist/plugins"));
-    if let Some(data) = dirs::data_dir() {
-        search_dirs.push(data.join("xtools").join("plugins"));
-    }
-    search_dirs.push(PathBuf::from("/usr/share/xtools/plugins"));
-    search_dirs.push(PathBuf::from("/usr/local/share/xtools/plugins"));
-
+    let mut found_ids: Vec<String> = Vec::new();
     let mut found_count = 0;
     println!("Discovered xtools WASM plugins:");
     for dir in &search_dirs {
         if dir.exists() {
             let plugins = loader.scan_dir(dir);
             for p in plugins {
+                if found_ids.contains(&p.manifest.id) {
+                    continue;
+                }
+                found_ids.push(p.manifest.id.clone());
                 found_count += 1;
                 println!(
                     "  • {} ({}) v{} [{}] - {}",

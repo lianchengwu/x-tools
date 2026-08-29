@@ -12,6 +12,40 @@ pub struct DiscoveredPlugin {
     pub manifest: PluginManifest,
 }
 
+/// Directories scanned for WASM plugins, in priority order.
+///
+/// Single source of truth shared by plugin listing, the floating-orb host, and
+/// plugin launching: the portable layout next to the executable, development
+/// output paths, the per-user data directory, and system-wide locations.
+pub fn plugin_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    // 1. Portable mode: plugins directory next to the executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            dirs.push(parent.join("plugins"));
+        }
+    }
+
+    // 2. Current working directory & development paths
+    dirs.push(PathBuf::from("plugins"));
+    dirs.push(PathBuf::from("wasm/dist/plugins"));
+    dirs.push(PathBuf::from("dist/plugins"));
+    dirs.push(PathBuf::from("wasm/target/wasm32-unknown-unknown/release"));
+    dirs.push(PathBuf::from("target/wasm32-unknown-unknown/release"));
+
+    // 3. Per-user data directory
+    if let Some(data) = dirs::data_dir() {
+        dirs.push(data.join("xtools").join("plugins"));
+    }
+
+    // 4. System-wide directories
+    dirs.push(PathBuf::from("/usr/share/xtools/plugins"));
+    dirs.push(PathBuf::from("/usr/local/share/xtools/plugins"));
+
+    dirs
+}
+
 pub struct PluginLoader {
     engine: Engine,
     storage_root: Option<PathBuf>,

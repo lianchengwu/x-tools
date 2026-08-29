@@ -25,30 +25,14 @@ fn find_plugin_wasm(arg: &str) -> Option<PathBuf> {
         return Some(direct_path);
     }
 
-    let mut search_dirs = Vec::new();
+    let mut search_dirs = xtools_runtime::plugin_search_dirs();
 
-    // 1. 同级 plugins 目录
+    // 同级目录下的 wasm 文件也允许直接查找
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
-            search_dirs.push(parent.join("plugins"));
-            search_dirs.push(parent.to_path_buf());
+            search_dirs.insert(1, parent.to_path_buf());
         }
     }
-
-    // 2. 当前目录 & dev paths
-    search_dirs.push(PathBuf::from("plugins"));
-    search_dirs.push(PathBuf::from("wasm/dist/plugins"));
-    search_dirs.push(PathBuf::from("dist/plugins"));
-    search_dirs.push(PathBuf::from("wasm/target/wasm32-unknown-unknown/release"));
-    search_dirs.push(PathBuf::from("target/wasm32-unknown-unknown/release"));
-    // 3. 用户级目录
-    if let Some(data) = dirs::data_dir() {
-        search_dirs.push(data.join("xtools").join("plugins"));
-    }
-
-    // 4. 系统目录
-    search_dirs.push(PathBuf::from("/usr/share/xtools/plugins"));
-    search_dirs.push(PathBuf::from("/usr/local/share/xtools/plugins"));
 
     let clean_name = arg
         .trim_start_matches("xtools.")

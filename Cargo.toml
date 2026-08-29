@@ -35,8 +35,9 @@ serde = { version = "1.0.229", default-features = false, features = ["derive", "
 serde_json = { version = "1.0.151", default-features = false, features = ["alloc"] }
 thiserror = "2.0.20"
 log = "0.4"
+dirs = "6.0"
 jiff = { version = "0.2.35", default-features = false }
-wasmtime = { version = "29.0.0", default-features = false, features = ["runtime", "cranelift", "std", "async"] }
+wasmtime = { version = "29.0.0", default-features = false, features = ["runtime", "cranelift", "std"] }
 ureq = { version = "3.4.0", features = ["json"] }
 arboard = "3.4.1"
 slint = "1.17.1"

@@ -101,32 +101,7 @@ impl Host {
         let loader = PluginLoader::new();
         let mut discovered = Vec::new();
 
-        let mut search_dirs = Vec::new();
-
-        // 1. Plugins relative to binary (portable mode)
-        if let Ok(current_exe) = std::env::current_exe() {
-            if let Some(parent) = current_exe.parent() {
-                search_dirs.push(parent.join("plugins"));
-            }
-        }
-
-        // 2. Working directory & dev paths
-        search_dirs.push(PathBuf::from("plugins"));
-        search_dirs.push(PathBuf::from("wasm/dist/plugins"));
-        search_dirs.push(PathBuf::from("dist/plugins"));
-        search_dirs.push(PathBuf::from("wasm/target/wasm32-unknown-unknown/release"));
-        search_dirs.push(PathBuf::from("target/wasm32-unknown-unknown/release"));
-
-        // 3. User data directory
-        if let Some(data_dir) = dirs::data_dir() {
-            search_dirs.push(data_dir.join("xtools").join("plugins"));
-        }
-
-        // 4. System paths
-        search_dirs.push(PathBuf::from("/usr/share/xtools/plugins"));
-        search_dirs.push(PathBuf::from("/usr/local/share/xtools/plugins"));
-
-        for dir in &search_dirs {
+        for dir in &xtools_runtime::plugin_search_dirs() {
             if dir.exists() {
                 let found = loader.scan_dir(dir);
                 for p in found {
