@@ -181,8 +181,10 @@ pub fn setup_raise_timer(
             Some(crate::instance::InstanceCommand::Raise(_token)) => {
                 if let Some(ui) = window.upgrade() {
                     let _ = ui.window().show();
-                    #[cfg(feature = "x11-skip-taskbar")]
-                    crate::skip_taskbar::raise_x11_window();
+                    use i_slint_backend_winit::WinitWindowAccessor;
+                    ui.window().with_winit_window(|w| {
+                        w.focus_window();
+                    });
                 }
             }
             None => {}
@@ -191,97 +193,6 @@ pub fn setup_raise_timer(
     timer
 }
 
-/// Start a timer that applies X11 skip taskbar for the first few ticks.
-#[cfg(feature = "x11-skip-taskbar")]
-pub fn setup_skip_taskbar_timer() -> slint::Timer {
-    let timer = slint::Timer::default();
-    let tries = Arc::new(Mutex::new(0u8));
-    timer.start(
-        slint::TimerMode::Repeated,
-        Duration::from_millis(80),
-        move || {
-            let mut count = tries.lock();
-            if *count < 12 {
-                crate::skip_taskbar::apply();
-                *count += 1;
-            }
-        },
-    );
-    timer
-}
-
-/// Consecutive failing ticks (60 ms each) required before auto-exit fires.
-/// Guards against the transient `_NET_ACTIVE_WINDOW` flapping that XWayland
-/// windows exhibit on Plasma Wayland.
-const FOCUS_LOSS_EXIT_TICKS: u8 = 10;
-
-/// Window-opening grace: during the first seconds after the first engagement,
-/// focus flaps are ignored entirely (the user may still be moving the pointer
-/// towards the freshly opened window).
-const STARTUP_FOCUS_GRACE: Duration = Duration::from_secs(5);
-
-/// Start a timer that automatically exits the process once the user has moved
-/// on from the tool window: focus left and the pointer is elsewhere, sustained
-/// for `FOCUS_LOSS_EXIT_TICKS`. Hovering or interacting with the window keeps
-/// it alive even when the compositor reports the focus elsewhere.
-#[cfg(feature = "x11-skip-taskbar")]
-pub fn setup_auto_exit_on_focus_loss_timer() -> slint::Timer {
-    let timer = slint::Timer::default();
-    let was_engaged = Arc::new(Mutex::new(false));
-    let initial_ticks = Arc::new(Mutex::new(0u8));
-    let loss_ticks = Arc::new(Mutex::new(0u8));
-    let first_engaged = Arc::new(Mutex::new(Option::<std::time::Instant>::None));
-    timer.start(
-        slint::TimerMode::Repeated,
-        Duration::from_millis(60),
-        move || {
-            let engaged = crate::skip_taskbar::is_process_window_engaged();
-            let was = *was_engaged.lock();
-            let mut ticks = initial_ticks.lock();
-            if *ticks < 4 {
-                *ticks += 1;
-                if engaged == Some(true) {
-                    *was_engaged.lock() = true;
-                }
-                return;
-            }
-
-            match engaged {
-                Some(true) => {
-                    let mut first = first_engaged.lock();
-                    if first.is_none() {
-                        log::debug!("auto-exit: tool window engaged");
-                        *first = Some(std::time::Instant::now());
-                    }
-                    *was_engaged.lock() = true;
-                    *loss_ticks.lock() = 0;
-                }
-                Some(false) if was => {
-                    let in_startup_grace = first_engaged
-                        .lock()
-                        .is_some_and(|t| t.elapsed() < STARTUP_FOCUS_GRACE);
-                    if in_startup_grace {
-                        *loss_ticks.lock() = 0;
-                        return;
-                    }
-                    let mut loss = loss_ticks.lock();
-                    *loss += 1;
-                    if *loss >= FOCUS_LOSS_EXIT_TICKS {
-                        log::info!(
-                            "auto-exit: focus lost for {} ms, exiting",
-                            u16::from(FOCUS_LOSS_EXIT_TICKS) * 60
-                        );
-                        std::process::exit(0);
-                    }
-                }
-                _ => {
-                    *loss_ticks.lock() = 0;
-                }
-            }
-        },
-    );
-    timer
-}
 #[cfg(test)]
 mod tests {
     use super::*;

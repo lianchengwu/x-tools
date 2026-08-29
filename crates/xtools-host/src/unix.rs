@@ -4,7 +4,6 @@ use std::process::Command;
 use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::time::Duration;
 use gtk4::gdk::prelude::*;
 use gtk4::glib;
 use gtk4::prelude::*;
@@ -362,14 +361,7 @@ fn launch_plugin(plugin: &DiscoveredPlugin) {
 
     match cmd.spawn() {
         Ok(mut child) => {
-            let pid = child.id();
             std::thread::spawn(move || {
-                if let Some(desk) = desktop {
-                    for _ in 0..12 {
-                        std::thread::sleep(Duration::from_millis(80));
-                        xtools_ui::kwin::pin_pid(pid, Some(&desk));
-                    }
-                }
                 let _ = child.wait();
             });
         }

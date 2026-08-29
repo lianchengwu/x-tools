@@ -30,7 +30,7 @@ rust-version = "1.85"
 xtools-protocol = { path = "crates/xtools-protocol" }
 xtools-sdk = { path = "crates/xtools-sdk" }
 xtools-runtime = { path = "crates/xtools-runtime" }
-xtools-ui = { path = "crates/xtools-ui", features = ["slint-chrome", "x11-skip-taskbar"] }
+xtools-ui = { path = "crates/xtools-ui", features = ["slint-chrome"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1.0.151", default-features = false, features = ["alloc"] }
 thiserror = "2.0.20"

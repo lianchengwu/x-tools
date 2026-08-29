@@ -6,16 +6,11 @@ use std::time::Duration;
 use slint::ComponentHandle;
 use xtools_protocol::*;
 use xtools_runtime::PluginInstance;
-use xtools_ui::boot::{
-    capture_target_desktop, init_input_method_env, prefer_x11_for_skip_taskbar,
-    take_activation_token,
-};
+use xtools_ui::boot::{capture_target_desktop, init_input_method_env, take_activation_token};
 use xtools_ui::instance::{claim_instance, raise_instance};
 use xtools_ui::slint_chrome::{
     ResizeEdge, WindowDragState, WindowResizeState, copy_to_clipboard, setup_raise_timer,
 };
-#[cfg(unix)]
-use xtools_ui::slint_chrome::{setup_auto_exit_on_focus_loss_timer, setup_skip_taskbar_timer};
 
 slint::include_modules!();
 
@@ -517,7 +512,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     init_input_method_env();
     capture_target_desktop();
-    prefer_x11_for_skip_taskbar();
     let token = take_activation_token();
 
     let args: Vec<String> = std::env::args().collect();
@@ -1101,11 +1095,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let _raise_timer = setup_raise_timer(lock, ui.as_weak());
+    // Wayland/KWin: the persistent script applies skipTaskbar/skipPager/onAllDesktops
+    // on windowAdded; just make sure it is loaded and restore the captured desktop.
     #[cfg(unix)]
-    let (_skip_timer, _focus_timer) = (
-        setup_skip_taskbar_timer(),
-        setup_auto_exit_on_focus_loss_timer(),
-    );
+    xtools_ui::kwin::pin_self(xtools_ui::boot::target_desktop().as_deref());
 
     ui.run()?;
     Ok(())

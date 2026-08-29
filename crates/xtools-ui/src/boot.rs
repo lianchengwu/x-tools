@@ -40,18 +40,6 @@ pub fn take_activation_token() -> Option<String> {
     None
 }
 
-#[cfg(unix)]
-pub fn prefer_x11_for_skip_taskbar() {
-    if std::env::var_os("DISPLAY").is_some() {
-        unsafe {
-            std::env::remove_var("WAYLAND_DISPLAY");
-        }
-    }
-}
-
-#[cfg(windows)]
-pub fn prefer_x11_for_skip_taskbar() {}
-
 /// Initialize input method and locale environment for Linux.
 ///
 /// Ensures XMODIFIERS is configured to `@im=fcitx` if unset so X11/XWayland (XIM)

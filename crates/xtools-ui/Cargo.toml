@@ -7,14 +7,12 @@ rust-version.workspace = true
 [features]
 default = ["slint-chrome"]
 slint-chrome = ["dep:slint", "dep:i-slint-backend-winit", "dep:arboard", "dep:parking_lot"]
-x11-skip-taskbar = ["dep:x11rb"]
 [dependencies]
 arboard = { version = "3.4.1", optional = true }
 i-slint-backend-winit = { version = "1.17.1", optional = true }
 log = "0.4"
 parking_lot = { version = "0.12.5", optional = true }
 slint = { version = "1.17.1", optional = true }
-x11rb = { version = "0.13.2", optional = true }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 [target.'cfg(windows)'.dependencies]
