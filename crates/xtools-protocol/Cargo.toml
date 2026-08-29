@@ -1,0 +1,11 @@
+[package]
+name = "xtools-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Shared protocol definitions and UI schema for xtools WASM plugins"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["alloc"] }

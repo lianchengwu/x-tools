@@ -1,0 +1,63 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/xtools-protocol",
+    "crates/xtools-sdk",
+    "crates/xtools-ui",
+    "crates/xtools-runtime",
+    "crates/xtools-runner",
+    "crates/xtools-host",
+    "plugins/xtools-plugin-time",
+    "plugins/xtools-plugin-json",
+    "plugins/xtools-plugin-trans",
+]
+default-members = [
+    "crates/xtools-protocol",
+    "crates/xtools-sdk",
+    "crates/xtools-ui",
+    "crates/xtools-runtime",
+    "crates/xtools-runner",
+    "crates/xtools-host",
+]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+xtools-protocol = { path = "crates/xtools-protocol" }
+xtools-sdk = { path = "crates/xtools-sdk" }
+xtools-runtime = { path = "crates/xtools-runtime" }
+xtools-ui = { path = "crates/xtools-ui", features = ["slint-chrome", "x11-skip-taskbar"] }
+serde = { version = "1.0.229", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["alloc"] }
+thiserror = "2.0.20"
+log = "0.4"
+jiff = { version = "0.2.35", default-features = false }
+wasmtime = { version = "29.0.0", default-features = false, features = ["runtime", "cranelift", "std", "async"] }
+ureq = { version = "3.4.0", features = ["json"] }
+arboard = "3.4.1"
+slint = "1.17.1"
+slint-build = "1.17.1"
+i-slint-backend-winit = "1.17.1"
+resvg = "0.47.0"
+tiny-skia = "0.12.0"
+usvg = "0.47.0"
+parking_lot = "0.12.5"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -1,0 +1,67 @@
+import { Palette } from "std-widgets.slint";
+
+// Single source of truth for the three tool windows.
+// Colors follow the system light/dark preference via Palette.color-scheme
+// (winit keeps it live). Every color used by tool UIs must come from here —
+// no hex literals in app or component files.
+export global Theme {
+    out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+
+    // Surfaces & Canvas
+    out property <color> background: dark ? #171717 : #F8FAFC;
+    out property <color> card-bg: dark ? #262626 : #FFFFFF;
+    out property <color> foreground: dark ? #E5E5E5 : #0F172A;
+    // Foreground one step softer (secondary text, icon hover)
+    out property <color> foreground-soft: dark ? #D4D4D4 : #475569;
+    out property <color> secondary: dark ? #262626 : #F1F5F9;
+    out property <color> secondary-hover: dark ? #404040 : #E2E8F0;
+    out property <color> secondary-active: dark ? #525252 : #CBD5E1;
+    out property <color> muted: dark ? #A3A3A3 : #64748B;
+    out property <color> border: dark ? #404040 : #E2E8F0;
+    out property <color> border-subtle: dark ? #262626 : #F1F5F9;
+    out property <color> border-hover: dark ? #525252 : #CBD5E1;
+
+    // Brand & Primary Accents
+    out property <color> primary: dark ? #3B82F6 : #2563EB;
+    out property <color> primary-hover: dark ? #60A5FA : #1D4ED8;
+    out property <color> primary-active: dark ? #2563EB : #1E40AF;
+    out property <color> primary-fg: #FFFFFF;
+    out property <color> primary-disabled: dark ? #404040 : #93C5FD;
+    out property <color> primary-glow: dark ? #3B82F640 : #2563EB26;
+    out property <color> selection: dark ? #1D4ED8 : #BFDBFE;
+
+    // Success / Copied
+    out property <color> success: dark ? #34D399 : #059669;
+    out property <color> success-hover: dark ? #6EE7B7 : #047857;
+    out property <color> success-bg: dark ? #022C22 : #ECFDF5;
+    out property <color> success-border: dark ? #065F46 : #A7F3D0;
+
+    // Errors & Warnings
+    out property <color> error-fg: dark ? #F87171 : #DC2626;
+    out property <color> error-bg: dark ? #450A0A : #FEF2F2;
+    out property <color> error-border: dark ? #7F1D1D : #FECACA;
+
+    // JSON syntax highlighting (see xtools-json tree view)
+    out property <color> syntax-key: dark ? #93C5FD : #1E40AF;
+    out property <color> syntax-string: dark ? #34D399 : #059669;
+    out property <color> syntax-number: dark ? #FBBF24 : #D97706;
+    out property <color> syntax-boolean: dark ? #FB923C : #EA580C;
+    out property <color> syntax-null: dark ? #737373 : #94A3B8;
+    out property <color> syntax-text: dark ? #D4D4D4 : #334155;
+
+    // Drop shadow for popups (stronger in dark to stay visible)
+    out property <color> drop-shadow: dark ? #00000066 : #0000001E;
+
+    // Typography
+    out property <length> font-size-title: 15px;
+    out property <length> font-size-body: 14px;
+    out property <length> font-size-small: 12px;
+    out property <string> font-mono: "monospace";
+
+    // Geometry & Metrics
+    out property <length> radius-card: 8px;
+    out property <length> radius-control: 8px;
+    out property <length> radius-pill: 8px;
+    out property <length> control-height: 32px;
+    out property <length> titlebar-height: 42px;
+}

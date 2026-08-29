@@ -1,0 +1,18 @@
+[package]
+name = "xtools-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Wasmtime-based WASM plugin runtime and host API environment for xtools"
+
+[dependencies]
+xtools-protocol = { workspace = true }
+wasmtime = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+ureq = { workspace = true }
+arboard = { workspace = true }

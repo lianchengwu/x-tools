@@ -1,0 +1,16 @@
+[package]
+name = "xtools-plugin-trans"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Multi-engine translation plugin for xtools"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+xtools-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

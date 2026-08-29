@@ -1,0 +1,22 @@
+[package]
+name = "xtools-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Universal Native UI Runner for xtools WASM plugins"
+
+[dependencies]
+xtools-protocol = { workspace = true }
+xtools-runtime = { workspace = true }
+xtools-ui = { workspace = true }
+wasmtime = { workspace = true }
+slint = { workspace = true }
+parking_lot = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+env_logger = "0.11"
+dirs = "6.0"
+
+[build-dependencies]
+slint-build = { workspace = true }

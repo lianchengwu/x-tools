@@ -1,0 +1,814 @@
+import { ToolShell, MultilineEditor, ActionButton, CopyButton, IconButton, ValueInput, FieldWithAction, DropdownSelector, InlineError, InlineNote, Theme } from "@xtools-ui/components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export struct TreeNodeItem {
+    id: int,
+    depth: int,
+    key-text: string,
+    value-text: string,
+    node-type: string,
+    summary-text: string,
+    is-leaf: bool,
+    collapsed: bool,
+    has-comma: bool,
+}
+
+export component RunnerWindow inherits Window {
+    title: "xtools";
+    no-frame: true;
+    background: Colors.transparent;
+    default-font-family: "sans-serif";
+    min-width: 420px;
+    min-height: 320px;
+    preferred-width: 560px;
+    preferred-height: 520px;
+
+    in-out property <string> window-title: "xtools";
+    in-out property <string> window-icon: "⚡";
+    in-out property <string> plugin-kind: ""; // "time", "json", "trans", "generic"
+    in-out property <bool> resizable: true;
+    in-out property <bool> show-expand-button: true;
+    in-out property <bool> is-expanded: false;
+    // Window Management Callbacks
+    callback close-clicked();
+    callback expand-clicked();
+    callback window-drag-started();
+    callback window-dragged(length, length);
+    callback window-resize-started(int);
+    callback window-resized(length, length);
+    // Generic Dispatch Callbacks
+    callback button-clicked(string);
+    callback input-changed(string, string);
+    callback select-changed(string, int);
+    callback tab-changed(string, int);
+    callback tree-toggle-clicked(string, int);
+
+    // Toast State
+    in-out property <bool> toast-visible: false;
+    in-out property <string> toast-message: "";
+    in-out property <bool> toast-is-success: true;
+
+    // -------------------------------------------------------------------------
+    // Time Plugin State & Callbacks
+    // -------------------------------------------------------------------------
+    in-out property <string> time-seconds: "";
+    in-out property <string> time-millis: "";
+    in-out property <string> time-local: "";
+    in-out property <int> time-tz-index: 0;
+    in-out property <[string]> time-tz-options: [];
+    in-out property <bool> time-sec-copied: false;
+    in-out property <bool> time-ms-copied: false;
+    in-out property <bool> time-local-copied: false;
+    in-out property <string> time-error-seconds: "";
+    in-out property <string> time-error-millis: "";
+    in-out property <string> time-error-local: "";
+
+    callback time-seconds-edited(string);
+    callback time-millis-edited(string);
+    callback time-local-edited(string);
+    callback time-now-clicked();
+    callback time-copy-sec();
+    callback time-copy-ms();
+    callback time-copy-local();
+    callback time-tz-changed(int);
+
+    // -------------------------------------------------------------------------
+    // JSON Plugin State & Callbacks
+    // -------------------------------------------------------------------------
+    in-out property <string> json-text: "";
+    in-out property <int> json-view-mode: 0; // 0 = Code, 1 = Tree Fold
+    in-out property <bool> json-copied: false;
+    in-out property <string> json-error: "";
+    in-out property <string> json-note: "";
+    in-out property <[TreeNodeItem]> json-tree-items: [];
+
+    callback json-format();
+    callback json-minify();
+    callback json-unescape();
+    callback json-validate();
+    callback json-clear();
+    callback json-copy();
+    callback json-mode-switch(int);
+    callback json-expand-all();
+    callback json-collapse-all();
+    callback json-fold-level(int);
+    callback json-text-edited(string);
+    callback json-tree-toggle(int);
+
+    // -------------------------------------------------------------------------
+    // Trans Plugin State & Callbacks
+    // -------------------------------------------------------------------------
+    in-out property <string> trans-source: "";
+    in-out property <string> trans-target: "";
+    in-out property <int> trans-src-idx: 0;
+    in-out property <int> trans-dst-idx: 0;
+    in-out property <int> trans-engine-idx: 0;
+    in-out property <[string]> trans-src-options: ["自动", "中文", "英语", "日语", "韩语", "法语", "德语", "西班牙语", "俄语"];
+    in-out property <[string]> trans-dst-options: ["中文", "英语", "日语", "韩语", "法语", "德语", "西班牙语", "俄语"];
+    in-out property <[string]> trans-engine-options: ["MyMemory (免密钥)", "百度翻译"];
+    in-out property <bool> trans-show-settings: false;
+    in-out property <string> trans-baidu-appid: "";
+    in-out property <string> trans-baidu-key: "";
+    in-out property <bool> trans-pending: false;
+    in-out property <bool> trans-copied: false;
+    in-out property <string> trans-error: "";
+    in-out property <string> trans-status: "引擎：MyMemory (免密钥)";
+
+    callback trans-translate();
+    callback trans-swap();
+    callback trans-clear();
+    callback trans-copy();
+    callback trans-toggle-settings();
+    callback trans-save-settings(string, string);
+    callback trans-source-edited(string);
+    callback trans-src-changed(int);
+    callback trans-dst-changed(int);
+    callback trans-engine-changed(int);
+
+    // -------------------------------------------------------------------------
+    // Generic Plugin Fallback State
+    // -------------------------------------------------------------------------
+    in-out property <string> generic-main-text: "";
+    in-out property <string> generic-error-text: "";
+    in-out property <string> generic-status-text: "";
+    in-out property <int> generic-active-tab: 0;
+    in-out property <[string]> generic-tab-labels: [];
+
+    forward-focus: focus-scope;
+    focus-scope := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.close-clicked();
+                return accept;
+            }
+            if (event.text == "\n" && event.modifiers.control) {
+                if (root.plugin-kind == "trans") {
+                    root.trans-translate();
+                    return accept;
+                }
+                if (root.plugin-kind == "json") {
+                    root.json-format();
+                    return accept;
+                }
+            }
+            reject
+        }
+        ToolShell {
+            width: 100%;
+            height: 100%;
+            title: root.window-title;
+            icon: root.window-icon;
+            resizable: root.resizable;
+            show-expand-button: root.show-expand-button;
+            is-expanded: root.is-expanded;
+            close-clicked => { root.close-clicked(); }
+            expand-clicked => { root.expand-clicked(); }
+            window-drag-started => { root.window-drag-started(); }
+            window-dragged(dx, dy) => { root.window-dragged(dx, dy); }
+            window-resize-started(edge) => { root.window-resize-started(edge); }
+            window-resized(dx, dy) => { root.window-resized(dx, dy); }
+
+            // =================================================================
+            // 1. TIME PLUGIN VIEW
+            // =================================================================
+            if root.plugin-kind == "time" : VerticalLayout {
+                spacing: 16px;
+                alignment: start;
+                vertical-stretch: 1;
+
+                VerticalLayout {
+                    spacing: 4px;
+                    FieldWithAction {
+                        caption: "秒 (Unix Timestamp / s)";
+                        text <=> root.time-seconds;
+                        is-copy: true;
+                        action-copied: root.time-sec-copied;
+                        action-enabled: true;
+                        action-clicked => { root.time-copy-sec(); }
+                        edited(t) => { root.time-seconds-edited(t); }
+                        accepted(t) => { root.time-seconds-edited(t); }
+                    }
+                    if root.time-error-seconds != "" : InlineError {
+                        error-text: root.time-error-seconds;
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 4px;
+                    FieldWithAction {
+                        caption: "毫秒 (Unix Timestamp / ms)";
+                        text <=> root.time-millis;
+                        is-copy: true;
+                        action-copied: root.time-ms-copied;
+                        action-enabled: true;
+                        action-clicked => { root.time-copy-ms(); }
+                        edited(t) => { root.time-millis-edited(t); }
+                        accepted(t) => { root.time-millis-edited(t); }
+                    }
+                    if root.time-error-millis != "" : InlineError {
+                        error-text: root.time-error-millis;
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 5px;
+
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text {
+                            text: "时间 (DateTime)";
+                            font-size: Theme.font-size-small;
+                            font-weight: 600;
+                            color: Theme.muted;
+                            vertical-alignment: center;
+                        }
+
+                        DropdownSelector {
+                            label: "时区：";
+                            options: root.time-tz-options;
+                            selected-index <=> root.time-tz-index;
+                            selector-width: 250px;
+                            selection-changed(idx) => { root.time-tz-changed(idx); }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: stretch;
+
+                        ValueInput {
+                            text <=> root.time-local;
+                            horizontal-stretch: 1;
+                            edited(t) => { root.time-local-edited(t); }
+                            accepted(t) => { root.time-local-edited(t); }
+                        }
+
+                        ActionButton {
+                            text: "⚡ 现在";
+                            is-primary: true;
+                            clicked => { root.time-now-clicked(); }
+                        }
+
+                        CopyButton {
+                            copied: root.time-local-copied;
+                            enabled: true;
+                            clicked => { root.time-copy-local(); }
+                        }
+                    }
+
+                    if root.time-error-local != "" : InlineError {
+                        error-text: root.time-error-local;
+                    }
+                }
+            }
+
+            // =================================================================
+            // 2. JSON PLUGIN VIEW
+            // =================================================================
+            if root.plugin-kind == "json" : VerticalLayout {
+                spacing: 10px;
+                alignment: stretch;
+                vertical-stretch: 1;
+
+                // Mode switcher and toolbar header
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: space-between;
+
+                    // Mode switch tabs
+                    Rectangle {
+                        border-radius: Theme.radius-control;
+                        background: Theme.secondary-hover;
+                        height: 32px;
+
+                        HorizontalLayout {
+                            padding: 2px;
+                            spacing: 2px;
+
+                            // Text mode
+                            Rectangle {
+                                border-radius: Theme.radius-control - 2px;
+                                background: root.json-view-mode == 0 ? Theme.card-bg : Colors.transparent;
+
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    alignment: center;
+
+                                    Text {
+                                        text: "📝 源码编辑";
+                                        font-size: Theme.font-size-small;
+                                        font-weight: root.json-view-mode == 0 ? 600 : 500;
+                                        color: root.json-view-mode == 0 ? Theme.foreground : Theme.muted;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                TouchArea {
+                                    clicked => { root.json-mode-switch(0); }
+                                }
+                            }
+
+                            // Tree fold mode
+                            Rectangle {
+                                border-radius: Theme.radius-control - 2px;
+                                background: root.json-view-mode == 1 ? Theme.card-bg : Colors.transparent;
+
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    alignment: center;
+
+                                    Text {
+                                        text: "🌲 树形折叠";
+                                        font-size: Theme.font-size-small;
+                                        font-weight: root.json-view-mode == 1 ? 600 : 500;
+                                        color: root.json-view-mode == 1 ? Theme.primary : Theme.muted;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                TouchArea {
+                                    clicked => { root.json-mode-switch(1); }
+                                }
+                            }
+                        }
+                    }
+
+                    // Tree mode quick fold tools
+                    if root.json-view-mode == 1 : HorizontalLayout {
+                        spacing: 6px;
+                        alignment: end;
+
+                        ActionButton {
+                            text: "全部展开";
+                            min-btn-width: 60px;
+                            clicked => { root.json-expand-all(); }
+                        }
+
+                        ActionButton {
+                            text: "全部折叠";
+                            min-btn-width: 60px;
+                            clicked => { root.json-collapse-all(); }
+                        }
+
+                        ActionButton {
+                            text: "折叠至2层";
+                            min-btn-width: 65px;
+                            clicked => { root.json-fold-level(2); }
+                        }
+                    }
+                }
+
+                // Main editor / Tree viewer area
+                if root.json-view-mode == 0 : MultilineEditor {
+                    text <=> root.json-text;
+                    vertical-stretch: 1;
+                    edited(t) => { root.json-text-edited(t); }
+                }
+
+                if root.json-view-mode == 1 : Rectangle {
+                    vertical-stretch: 1;
+                    border-radius: Theme.radius-control;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    background: Theme.card-bg;
+                    clip: true;
+
+                    ScrollView {
+                        viewport-width: self.width;
+
+                        VerticalLayout {
+                            alignment: start;
+                            spacing: 1px;
+                            padding-top: 6px;
+                            padding-bottom: 6px;
+                            padding-left: 4px;
+                            padding-right: 4px;
+
+                            for item in root.json-tree-items : Rectangle {
+                                height: 24px;
+                                border-radius: 4px;
+                                background: touch.has-hover ? Theme.secondary-hover : Colors.transparent;
+
+                                touch := TouchArea {
+                                    clicked => {
+                                        if (item.node-type == "object" || item.node-type == "array") {
+                                            root.json-tree-toggle(item.id);
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: 8px + (item.depth * 16px);
+                                    padding-right: 8px;
+                                    spacing: 4px;
+                                    alignment: start;
+
+                                    if (item.node-type == "object" || item.node-type == "array") : Rectangle {
+                                        width: 18px;
+                                        height: 18px;
+                                        border-radius: 3px;
+                                        background: btn-touch.has-hover ? Theme.secondary-hover : Colors.transparent;
+
+                                        Text {
+                                            text: item.collapsed ? "▶" : "▼";
+                                            font-size: 10px;
+                                            color: Theme.muted;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: center;
+                                        }
+
+                                        btn-touch := TouchArea {
+                                            clicked => {
+                                                root.json-tree-toggle(item.id);
+                                            }
+                                        }
+                                    }
+
+                                    if (item.node-type != "object" && item.node-type != "array") : Rectangle {
+                                        width: 18px;
+                                        height: 18px;
+                                    }
+
+                                    if item.key-text != "" : Text {
+                                        text: item.key-text;
+                                        font-family: Theme.font-mono;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        color: Theme.syntax-key;
+                                        vertical-alignment: center;
+                                    }
+
+                                    if item.value-text != "" : Text {
+                                        text: item.value-text;
+                                        font-family: Theme.font-mono;
+                                        font-size: 13px;
+                                        color: item.node-type == "string" ? Theme.syntax-string
+                                             : item.node-type == "number" ? Theme.syntax-number
+                                             : item.node-type == "boolean" ? Theme.syntax-boolean
+                                             : item.node-type == "null" ? Theme.syntax-null
+                                             : Theme.syntax-text;
+                                        font-italic: item.node-type == "null";
+                                        vertical-alignment: center;
+                                    }
+
+                                    if item.collapsed && (item.node-type == "object" || item.node-type == "array") : Rectangle {
+                                        height: 18px;
+                                        border-radius: 4px;
+                                        background: Theme.secondary;
+                                        border-width: 1px;
+                                        border-color: Theme.border-hover;
+
+                                        HorizontalLayout {
+                                            padding-left: 6px;
+                                            padding-right: 6px;
+                                            alignment: center;
+
+                                            Text {
+                                                text: item.summary-text;
+                                                font-size: 11px;
+                                                font-weight: 500;
+                                                color: Theme.foreground-soft;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+
+                                    if item.has-comma : Text {
+                                        text: ",";
+                                        font-family: Theme.font-mono;
+                                        font-size: 13px;
+                                        color: Theme.muted;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Error / Note area
+                if root.json-error != "" : InlineError {
+                    error-text: root.json-error;
+                }
+
+                // Action Toolbar at Bottom
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: stretch;
+
+                    ActionButton {
+                        text: "✨ 格式化";
+                        is-primary: true;
+                        clicked => { root.json-format(); }
+                    }
+
+                    ActionButton {
+                        text: "⚡ 压缩";
+                        clicked => { root.json-minify(); }
+                    }
+
+                    ActionButton {
+                        text: "🔓 去转义";
+                        clicked => { root.json-unescape(); }
+                    }
+
+                    ActionButton {
+                        text: "🔍 校验";
+                        clicked => { root.json-validate(); }
+                    }
+
+                    ActionButton {
+                        text: "🗑 清空";
+                        clicked => { root.json-clear(); }
+                    }
+
+                    if root.json-note != "" : InlineNote {
+                        text: root.json-note;
+                        horizontal-stretch: 1;
+                    }
+
+                    if root.json-note == "" : Rectangle {
+                        horizontal-stretch: 1;
+                    }
+
+                    CopyButton {
+                        copied: root.json-copied;
+                        enabled: root.json-text != "";
+                        clicked => { root.json-copy(); }
+                    }
+                }
+            }
+
+            // =================================================================
+            // 3. TRANS PLUGIN VIEW
+            // =================================================================
+            if root.plugin-kind == "trans" : VerticalLayout {
+                spacing: 8px;
+                alignment: stretch;
+                vertical-stretch: 1;
+
+                // Top Bar: Section Title + Engine Selector + Settings
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: space-between;
+
+                    Text {
+                        text: "原文 (Source)";
+                        font-size: Theme.font-size-small;
+                        font-weight: 600;
+                        color: Theme.muted;
+                        vertical-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: end;
+
+                        Text {
+                            text: "引擎：";
+                            font-size: Theme.font-size-small;
+                            font-weight: 500;
+                            color: Theme.muted;
+                            vertical-alignment: center;
+                        }
+
+                        DropdownSelector {
+                            options: root.trans-engine-options;
+                            selected-index <=> root.trans-engine-idx;
+                            selector-width: 140px;
+                            selection-changed(idx) => { root.trans-engine-changed(idx); }
+                        }
+
+                        if root.trans-engine-idx == 1 : IconButton {
+                            icon: "⚙";
+                            clicked => { root.trans-toggle-settings(); }
+                        }
+                    }
+                }
+
+                // Baidu Settings Drawer
+                if root.trans-show-settings : Rectangle {
+                    border-radius: Theme.radius-control;
+                    border-width: 1px;
+                    border-color: Theme.primary;
+                    background: Theme.card-bg;
+
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            alignment: space-between;
+                            Text {
+                                text: "🔑 百度翻译 API 密钥配置 (fanyi-api.baidu.com)";
+                                font-size: Theme.font-size-small;
+                                font-weight: 600;
+                                color: Theme.foreground;
+                                vertical-alignment: center;
+                            }
+                            IconButton {
+                                icon: "×";
+                                clicked => { root.trans-toggle-settings(); }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: stretch;
+                            ValueInput {
+                                placeholder: "输入 百度翻译 App ID";
+                                text <=> root.trans-baidu-appid;
+                                horizontal-stretch: 1;
+                            }
+                            ValueInput {
+                                placeholder: "输入 密钥 (Secret Key)";
+                                text <=> root.trans-baidu-key;
+                                horizontal-stretch: 1;
+                            }
+                            ActionButton {
+                                text: "保存";
+                                is-primary: true;
+                                clicked => {
+                                    root.trans-save-settings(root.trans-baidu-appid, root.trans-baidu-key);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                MultilineEditor {
+                    text <=> root.trans-source;
+                    vertical-stretch: 1;
+                    edited(t) => { root.trans-source-edited(t); }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: stretch;
+
+                    DropdownSelector {
+                        label: "源：";
+                        options: root.trans-src-options;
+                        selected-index <=> root.trans-src-idx;
+                        selector-width: 112px;
+                        selection-changed(idx) => { root.trans-src-changed(idx); }
+                    }
+
+                    IconButton {
+                        icon: "⇄";
+                        clicked => { root.trans-swap(); }
+                    }
+
+                    DropdownSelector {
+                        label: "目标：";
+                        options: root.trans-dst-options;
+                        selected-index <=> root.trans-dst-idx;
+                        selector-width: 112px;
+                        selection-changed(idx) => { root.trans-dst-changed(idx); }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+
+                    ActionButton {
+                        text: root.trans-pending ? "翻译中…" : "🚀 翻译";
+                        is-primary: true;
+                        enabled: !root.trans-pending && root.trans-source != "";
+                        clicked => { root.trans-translate(); }
+                    }
+                }
+
+                Text {
+                    text: "译文 (Translation)";
+                    font-size: Theme.font-size-small;
+                    font-weight: 600;
+                    color: Theme.muted;
+                }
+
+                MultilineEditor {
+                    text <=> root.trans-target;
+                    vertical-stretch: 1;
+                    read-only: true;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: stretch;
+
+                    if root.trans-error != "" : InlineError {
+                        error-text: root.trans-error;
+                        horizontal-stretch: 1;
+                    }
+
+                    if root.trans-error == "" : InlineNote {
+                        text: root.trans-pending ? "正在翻译…" : root.trans-status;
+                        horizontal-stretch: 1;
+                    }
+
+                    ActionButton {
+                        text: "🗑 清空";
+                        clicked => { root.trans-clear(); }
+                    }
+
+                    CopyButton {
+                        copied: root.trans-copied;
+                        enabled: root.trans-target != "";
+                        clicked => { root.trans-copy(); }
+                    }
+                }
+            }
+
+            // =================================================================
+            // 4. GENERIC / DYNAMIC PLUGIN FALLBACK VIEW
+            if root.plugin-kind == "generic" : VerticalLayout {
+                spacing: 12px;
+                alignment: stretch;
+                vertical-stretch: 1;
+                if root.generic-tab-labels.length > 0 : HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    for label[idx] in root.generic-tab-labels : Rectangle {
+                        height: 32px;
+                        min-width: 80px;
+                        border-radius: Theme.radius-control;
+                        background: root.generic-active-tab == idx ? Theme.primary : Theme.secondary;
+                        border-width: 1px;
+                        border-color: root.generic-active-tab == idx ? Theme.primary-hover : Theme.border;
+
+                        Text {
+                            text: label;
+                            color: root.generic-active-tab == idx ? Theme.primary-fg : Theme.foreground;
+                            font-size: Theme.font-size-body;
+                            font-weight: root.generic-active-tab == idx ? 600 : 500;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                root.generic-active-tab = idx;
+                                root.tab-changed("tabs", idx);
+                            }
+                        }
+                    }
+                }
+
+                MultilineEditor {
+                    text <=> root.generic-main-text;
+                    vertical-stretch: 1;
+                    edited(t) => {
+                        root.input-changed("main_input", t);
+                    }
+                }
+
+                if root.generic-error-text != "" : InlineError {
+                    error-text: root.generic-error-text;
+                }
+
+                if root.generic-status-text != "" : Text {
+                    text: root.generic-status-text;
+                    color: Theme.muted;
+                    font-size: Theme.font-size-small;
+                }
+            }
+        }
+
+        // Floating Toast Notification
+        if root.toast-visible : Rectangle {
+            x: (parent.width - 200px) / 2;
+            y: parent.height - 60px;
+            width: 200px;
+            height: 36px;
+            border-radius: 18px;
+            background: root.toast-is-success ? Theme.success-bg : Theme.error-bg;
+            border-width: 1px;
+            border-color: root.toast-is-success ? Theme.success-border : Theme.error-border;
+            drop-shadow-blur: 8px;
+            drop-shadow-color: Theme.drop-shadow;
+
+            HorizontalLayout {
+                alignment: center;
+                spacing: 6px;
+
+                Text {
+                    text: root.toast-is-success ? "✓" : "⚠️";
+                    font-size: Theme.font-size-body;
+                    font-weight: 700;
+                    color: root.toast-is-success ? Theme.success : Theme.error-fg;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: root.toast-message;
+                    font-size: Theme.font-size-body;
+                    font-weight: 600;
+                    color: root.toast-is-success ? Theme.success : Theme.error-fg;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
