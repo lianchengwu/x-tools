@@ -85,7 +85,16 @@
 
 ### 构建
 
-本工作区完全自包含（`xtools-ui` 已内置于 `crates/`），克隆后即可构建：
+本工作区完全自包含（`xtools-ui` 已内置于 `crates/`），克隆后即可构建。
+
+一键构建（推荐）：
+
+```bash
+./build.sh           # 构建宿主 + WASM 插件，组装 dist/ 便携目录
+./build.sh --test    # 构建前先跑全部测试
+```
+
+或分步执行：
 
 ```bash
 # 1. 构建宿主与运行器（产物 target/release/xtools）
