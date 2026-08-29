@@ -1,6 +1,7 @@
 mod anim;
 mod layout;
 mod runner;
+mod settings_window;
 
 #[cfg(unix)]
 mod paint;
@@ -21,6 +22,7 @@ fn print_help() {
     println!("  xtools host               # Start floating orb and system tray");
     println!("  xtools run <plugin>       # Launch specific WASM plugin window");
     println!("  xtools <plugin.wasm>      # Directly launch WASM plugin by path or name");
+    println!("  xtools settings           # Open the settings window (Baidu / AI config)");
     println!("  xtools list               # List all discovered WASM plugins");
     println!("  xtools --help             # Show this help information");
 }
@@ -44,6 +46,12 @@ fn main() {
         Some("-h") | Some("--help") | Some("help") => {
             print_help();
         }
+        Some("settings") => {
+            if let Err(e) = settings_window::run_settings() {
+                eprintln!("xtools error: {e}");
+                std::process::exit(1);
+            }
+        }
         Some("list") => {
             runner::list_plugins();
         }
@@ -59,7 +67,8 @@ fn main() {
                 || other.starts_with("xtools.")
                 || other == "time"
                 || other == "json"
-                || other == "trans" =>
+                || other == "trans"
+                || other == "ai" =>
         {
             if let Err(e) = runner::run_plugin(other) {
                 eprintln!("xtools error: {e}");

@@ -141,6 +141,11 @@ pub enum UiNode {
         id: String,
         nodes: Vec<JsonTreeNode>,
     },
+    /// Scrollable chat conversation view (AI assistant)
+    Chat {
+        id: String,
+        messages: Vec<ChatMessage>,
+    },
     /// Horizontal or vertical divider line
     Divider,
     /// Flexible or fixed empty spacing
@@ -277,6 +282,21 @@ pub struct JsonTreeNode {
     pub has_comma: bool,
     pub line_start: usize,
     pub line_end: usize,
+}
+
+/// Role of a chat conversation participant
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ChatRole {
+    #[default]
+    User,
+    Assistant,
+}
+
+/// A single message in a chat conversation view
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: ChatRole,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

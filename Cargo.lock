@@ -7387,6 +7387,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
+name = "xtools-plugin-ai"
+version = "0.4.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "xtools-sdk",
+]
+
+[[package]]
 name = "xtools-plugin-json"
 version = "0.4.0"
 dependencies = [
@@ -7490,6 +7500,7 @@ dependencies = [
  "log",
  "parking_lot",
  "resvg",
+ "serde",
  "serde_json",
  "slint",
  "slint-build",

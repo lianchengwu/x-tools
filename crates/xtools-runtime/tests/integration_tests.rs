@@ -38,7 +38,7 @@ fn test_plugin_scanner_discovers_all_plugins() {
     let loader = PluginLoader::new();
     let discovered = loader.scan_dir(&plugins_dir);
 
-    assert_eq!(discovered.len(), 3, "Expected 3 plugins, found {:?}", discovered);
+    assert_eq!(discovered.len(), 4, "Expected 4 plugins, found {:?}", discovered);
 
     let ids: Vec<_> = discovered.iter().map(|p| p.manifest.id.as_str()).collect();
     assert!(ids.contains(&"xtools.time"));
@@ -56,6 +56,10 @@ fn test_plugin_scanner_discovers_all_plugins() {
     let trans_p = discovered.iter().find(|p| p.manifest.id == "xtools.trans").unwrap();
     assert_eq!(trans_p.manifest.name, "智能翻译");
     assert_eq!(trans_p.manifest.mark, "文");
+
+    let ai_p = discovered.iter().find(|p| p.manifest.id == "xtools.ai").unwrap();
+    assert_eq!(ai_p.manifest.name, "AI 问答");
+    assert_eq!(ai_p.manifest.mark, "智");
 }
 
 #[test]

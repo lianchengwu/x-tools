@@ -69,6 +69,7 @@ jobs:
           -p xtools-plugin-time
           -p xtools-plugin-json
           -p xtools-plugin-trans
+          -p xtools-plugin-ai
 
       - name: Extract Version
         id: get_version
@@ -90,6 +91,7 @@ jobs:
           cp target/wasm32-unknown-unknown/release/xtools_plugin_time.wasm  "$STAGING/plugins/time.wasm"
           cp target/wasm32-unknown-unknown/release/xtools_plugin_json.wasm  "$STAGING/plugins/json.wasm"
           cp target/wasm32-unknown-unknown/release/xtools_plugin_trans.wasm "$STAGING/plugins/trans.wasm"
+          cp target/wasm32-unknown-unknown/release/xtools_plugin_ai.wasm    "$STAGING/plugins/ai.wasm"
           cp README.md "$STAGING/" 2>/dev/null || true
           cp LICENSE "$STAGING/" 2>/dev/null || true
 
@@ -130,6 +132,7 @@ jobs:
           -p xtools-plugin-time
           -p xtools-plugin-json
           -p xtools-plugin-trans
+          -p xtools-plugin-ai
 
       - name: Extract Version
         id: get_version
@@ -157,6 +160,7 @@ jobs:
           Copy-Item "target/wasm32-unknown-unknown/release/xtools_plugin_time.wasm"  -Destination "$staging/plugins/time.wasm"
           Copy-Item "target/wasm32-unknown-unknown/release/xtools_plugin_json.wasm"  -Destination "$staging/plugins/json.wasm"
           Copy-Item "target/wasm32-unknown-unknown/release/xtools_plugin_trans.wasm" -Destination "$staging/plugins/trans.wasm"
+          Copy-Item "target/wasm32-unknown-unknown/release/xtools_plugin_ai.wasm"    -Destination "$staging/plugins/ai.wasm"
           Copy-Item "README.md" -Destination $staging -ErrorAction SilentlyContinue
           Copy-Item "LICENSE" -Destination $staging -ErrorAction SilentlyContinue
 

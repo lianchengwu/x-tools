@@ -52,6 +52,15 @@ impl Tray for XtoolsTray {
             .into(),
             MenuItem::Separator,
             StandardItem {
+                label: "设置".into(),
+                activate: Box::new(|_| {
+                    spawn_settings_window();
+                }),
+                ..Default::default()
+            }
+            .into(),
+            MenuItem::Separator,
+            StandardItem {
                 label: "退出 xtools".into(),
                 activate: Box::new(|_| {
                     std::process::exit(0);
@@ -60,6 +69,20 @@ impl Tray for XtoolsTray {
             }
             .into(),
         ]
+    }
+}
+
+/// 从托盘拉起独立设置窗口（独立进程，重复点击由单实例机制合并）
+fn spawn_settings_window() {
+    let self_exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("xtools"));
+    match std::process::Command::new(self_exe)
+        .arg("settings")
+        .spawn()
+    {
+        Ok(_) => {}
+        Err(e) => {
+            log::error!("Failed to spawn settings window: {e}");
+        }
     }
 }
 

@@ -10,6 +10,7 @@ members = [
     "plugins/xtools-plugin-time",
     "plugins/xtools-plugin-json",
     "plugins/xtools-plugin-trans",
+    "plugins/xtools-plugin-ai",
 ]
 default-members = [
     "crates/xtools-protocol",

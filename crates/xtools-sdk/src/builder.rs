@@ -177,6 +177,14 @@ pub fn json_tree_viewer(id: impl Into<String>, nodes: Vec<JsonTreeNode>) -> UiNo
     }
 }
 
+/// Create a chat conversation viewer
+pub fn chat_viewer(id: impl Into<String>, messages: Vec<ChatMessage>) -> UiNode {
+    UiNode::Chat {
+        id: id.into(),
+        messages,
+    }
+}
+
 /// Create a divider
 pub fn divider() -> UiNode {
     UiNode::Divider

@@ -133,6 +133,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         "xtools.time" => "time",
         "xtools.json" => "json",
         "xtools.trans" => "trans",
+        "xtools.ai" => "ai",
         _ => "generic",
     };
 
@@ -172,6 +173,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         "json" => (580, 600, 960, 720),
         "trans" => (540, 580, 840, 700),
         "time" => (480, 400, 720, 500),
+        "ai" => (560, 640, 900, 780),
         _ => (
             manifest.window.width,
             manifest.window.height,
@@ -570,30 +572,6 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
         {
             let h = handle_event.clone();
-            ui.on_trans_toggle_settings(move || {
-                h(UiEvent::Click {
-                    id: "btn_toggle_settings".to_string(),
-                });
-            });
-        }
-        {
-            let h = handle_event.clone();
-            ui.on_trans_save_settings(move |appid, key| {
-                h(UiEvent::InputChanged {
-                    id: "cfg_baidu_appid".to_string(),
-                    value: appid.to_string(),
-                });
-                h(UiEvent::InputChanged {
-                    id: "cfg_baidu_key".to_string(),
-                    value: key.to_string(),
-                });
-                h(UiEvent::Click {
-                    id: "btn_save_config".to_string(),
-                });
-            });
-        }
-        {
-            let h = handle_event.clone();
             ui.on_trans_source_edited(move |t| {
                 h(UiEvent::InputChanged {
                     id: "input_source".to_string(),
@@ -628,6 +606,50 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
                     id: "select_engine".to_string(),
                     index: idx as usize,
                     value: idx.to_string(),
+                });
+            });
+        }
+    }
+
+    // Wire AI Plugin Callbacks
+    if plugin_kind == "ai" {
+        {
+            let h = handle_event.clone();
+            let ui_w = ui.as_weak();
+            ui.on_ai_send(move || {
+                if let Some(u) = ui_w.upgrade() {
+                    u.set_ai_pending(true);
+                }
+                h(UiEvent::Click {
+                    id: "btn_send".to_string(),
+                });
+                if let Some(u) = ui_w.upgrade() {
+                    u.set_ai_pending(false);
+                }
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_ai_clear(move || {
+                h(UiEvent::Click {
+                    id: "btn_clear".to_string(),
+                });
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_ai_copy(move || {
+                h(UiEvent::Click {
+                    id: "btn_copy".to_string(),
+                });
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_ai_input_edited(move |t| {
+                h(UiEvent::InputChanged {
+                    id: "input_draft".to_string(),
+                    value: t.to_string(),
                 });
             });
         }
@@ -698,6 +720,7 @@ fn sync_ui_view(ui: &RunnerWindow, view: &UiView, plugin_kind: &str) {
         "time" => sync_time_view(ui, &view.root),
         "json" => sync_json_view(ui, &view.root),
         "trans" => sync_trans_view(ui, &view.root),
+        "ai" => sync_ai_view(ui, &view.root),
         _ => sync_generic_view(ui, &view.root),
     }
 }
@@ -918,9 +941,6 @@ fn sync_trans_view(ui: &RunnerWindow, root: &UiNode) {
     let mut src_idx = 0;
     let mut dst_idx = 0;
     let mut engine_idx = 0;
-    let mut show_settings = false;
-    let mut baidu_appid = None;
-    let mut baidu_key = None;
     let mut error_text = String::new();
     let mut status_text = String::new();
 
@@ -931,9 +951,6 @@ fn sync_trans_view(ui: &RunnerWindow, root: &UiNode) {
         &mut src_idx,
         &mut dst_idx,
         &mut engine_idx,
-        &mut show_settings,
-        &mut baidu_appid,
-        &mut baidu_key,
         &mut error_text,
         &mut status_text,
     );
@@ -947,13 +964,6 @@ fn sync_trans_view(ui: &RunnerWindow, root: &UiNode) {
     ui.set_trans_src_idx(src_idx as i32);
     ui.set_trans_dst_idx(dst_idx as i32);
     ui.set_trans_engine_idx(engine_idx as i32);
-    ui.set_trans_show_settings(show_settings);
-    if let Some(id) = baidu_appid {
-        ui.set_trans_baidu_appid(id.into());
-    }
-    if let Some(k) = baidu_key {
-        ui.set_trans_baidu_key(k.into());
-    }
     ui.set_trans_error(error_text.into());
     if !status_text.is_empty() {
         ui.set_trans_status(status_text.into());
@@ -967,9 +977,6 @@ fn collect_trans_nodes(
     src_idx: &mut usize,
     dst_idx: &mut usize,
     engine_idx: &mut usize,
-    show_settings: &mut bool,
-    baidu_appid: &mut Option<String>,
-    baidu_key: &mut Option<String>,
     error_text: &mut String,
     status_text: &mut String,
 ) {
@@ -983,20 +990,12 @@ fn collect_trans_nodes(
                     src_idx,
                     dst_idx,
                     engine_idx,
-                    show_settings,
-                    baidu_appid,
-                    baidu_key,
                     error_text,
                     status_text,
                 );
             }
         }
-        UiNode::Card { title, children, .. } => {
-            if let Some(t) = title {
-                if t.contains("百度翻译") {
-                    *show_settings = true;
-                }
-            }
+        UiNode::Card { children, .. } => {
             for child in children {
                 collect_trans_nodes(
                     child,
@@ -1005,9 +1004,6 @@ fn collect_trans_nodes(
                     src_idx,
                     dst_idx,
                     engine_idx,
-                    show_settings,
-                    baidu_appid,
-                    baidu_key,
                     error_text,
                     status_text,
                 );
@@ -1016,8 +1012,6 @@ fn collect_trans_nodes(
         UiNode::TextInput { id, value, .. } => match id.as_str() {
             "input_source" => *source = Some(value.clone()),
             "input_target" => *target = Some(value.clone()),
-            "cfg_baidu_appid" => *baidu_appid = Some(value.clone()),
-            "cfg_baidu_key" => *baidu_key = Some(value.clone()),
             _ => {}
         },
         UiNode::Select {
@@ -1033,6 +1027,78 @@ fn collect_trans_nodes(
                 *error_text = t.clone();
             } else if *variant == LabelVariant::Secondary || *variant == LabelVariant::Muted {
                 if t.contains("引擎") || t.contains("翻译") {
+                    *status_text = t.clone();
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+// -----------------------------------------------------------------------------
+// AI Plugin View Sync
+// -----------------------------------------------------------------------------
+fn sync_ai_view(ui: &RunnerWindow, root: &UiNode) {
+    let mut messages: Vec<ChatMessage> = Vec::new();
+    let mut draft = None;
+    let mut error_text = String::new();
+    let mut status_text = String::new();
+
+    collect_ai_nodes(
+        root,
+        &mut messages,
+        &mut draft,
+        &mut error_text,
+        &mut status_text,
+    );
+
+    let items: Vec<AiChatMessage> = messages
+        .iter()
+        .map(|m| AiChatMessage {
+            role: match m.role {
+                ChatRole::User => 0,
+                ChatRole::Assistant => 1,
+            },
+            content: m.content.clone().into(),
+        })
+        .collect();
+    ui.set_ai_messages(slint::ModelRc::new(slint::VecModel::from(items)));
+
+    if let Some(d) = draft {
+        ui.set_ai_input(d.into());
+    }
+    ui.set_ai_error(error_text.into());
+    if !status_text.is_empty() {
+        ui.set_ai_status(status_text.into());
+    }
+}
+
+fn collect_ai_nodes(
+    node: &UiNode,
+    messages: &mut Vec<ChatMessage>,
+    draft: &mut Option<String>,
+    error_text: &mut String,
+    status_text: &mut String,
+) {
+    match node {
+        UiNode::Container { children, .. } => {
+            for child in children {
+                collect_ai_nodes(child, messages, draft, error_text, status_text);
+            }
+        }
+        UiNode::Chat { messages: msgs, .. } => {
+            *messages = msgs.clone();
+        }
+        UiNode::TextInput { id, value, .. } => {
+            if id == "input_draft" {
+                *draft = Some(value.clone());
+            }
+        }
+        UiNode::Label { text: t, variant, .. } => {
+            if *variant == LabelVariant::Error {
+                *error_text = t.clone();
+            } else if *variant == LabelVariant::Secondary || *variant == LabelVariant::Muted {
+                if t.contains("AI") || t.contains("剪贴板") {
                     *status_text = t.clone();
                 }
             }

@@ -113,7 +113,7 @@ fn translate_baidu(
     key: &str,
 ) -> Result<String, String> {
     if appid.trim().is_empty() || key.trim().is_empty() {
-        return Err("请先在「引擎设置」中配置百度翻译 AppID 与 密钥 (Key)".to_string());
+        return Err("请先在托盘菜单「设置」中配置百度翻译 AppID 与 密钥 (Key)".to_string());
     }
 
     let from_lang = to_baidu_lang(src);

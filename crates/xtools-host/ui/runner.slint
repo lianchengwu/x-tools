@@ -1,5 +1,5 @@
 import { ToolShell, MultilineEditor, ActionButton, CopyButton, IconButton, ValueInput, FieldWithAction, DropdownSelector, InlineError, InlineNote, Theme } from "@xtools-ui/components.slint";
-import { ScrollView } from "std-widgets.slint";
+import { ListView, ScrollView } from "std-widgets.slint";
 
 export struct TreeNodeItem {
     id: int,
@@ -11,6 +11,11 @@ export struct TreeNodeItem {
     is-leaf: bool,
     collapsed: bool,
     has-comma: bool,
+}
+
+export struct AiChatMessage {
+    role: int, // 0 = user, 1 = assistant
+    content: string,
 }
 
 export component RunnerWindow inherits Window {
@@ -106,9 +111,6 @@ export component RunnerWindow inherits Window {
     in-out property <[string]> trans-src-options: ["自动", "中文", "英语", "日语", "韩语", "法语", "德语", "西班牙语", "俄语"];
     in-out property <[string]> trans-dst-options: ["中文", "英语", "日语", "韩语", "法语", "德语", "西班牙语", "俄语"];
     in-out property <[string]> trans-engine-options: ["MyMemory (免密钥)", "百度翻译"];
-    in-out property <bool> trans-show-settings: false;
-    in-out property <string> trans-baidu-appid: "";
-    in-out property <string> trans-baidu-key: "";
     in-out property <bool> trans-pending: false;
     in-out property <bool> trans-copied: false;
     in-out property <string> trans-error: "";
@@ -118,12 +120,33 @@ export component RunnerWindow inherits Window {
     callback trans-swap();
     callback trans-clear();
     callback trans-copy();
-    callback trans-toggle-settings();
-    callback trans-save-settings(string, string);
     callback trans-source-edited(string);
     callback trans-src-changed(int);
     callback trans-dst-changed(int);
     callback trans-engine-changed(int);
+
+    // -------------------------------------------------------------------------
+    // Host Settings View State (tray → 设置)
+    // -------------------------------------------------------------------------
+    in-out property <string> settings-baidu-appid: "";
+    in-out property <string> settings-baidu-key: "";
+    in-out property <string> settings-ai-base-url: "";
+    in-out property <string> settings-ai-api-key: "";
+    in-out property <string> settings-ai-model: "";
+
+    // -------------------------------------------------------------------------
+    // AI Plugin State & Callbacks
+    // -------------------------------------------------------------------------
+    in-out property <[AiChatMessage]> ai-messages: [];
+    in-out property <string> ai-input: "";
+    in-out property <bool> ai-pending: false;
+    in-out property <string> ai-error: "";
+    in-out property <string> ai-status: "";
+
+    callback ai-send();
+    callback ai-clear();
+    callback ai-copy();
+    callback ai-input-edited(string);
 
     // -------------------------------------------------------------------------
     // Generic Plugin Fallback State
@@ -148,6 +171,10 @@ export component RunnerWindow inherits Window {
                 }
                 if (root.plugin-kind == "json") {
                     root.json-format();
+                    return accept;
+                }
+                if (root.plugin-kind == "ai") {
+                    root.ai-send();
                     return accept;
                 }
             }
@@ -549,7 +576,7 @@ export component RunnerWindow inherits Window {
                 alignment: stretch;
                 vertical-stretch: 1;
 
-                // Top Bar: Section Title + Engine Selector + Settings
+                // Top Bar: Section Title + Engine Selector
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: space-between;
@@ -579,61 +606,6 @@ export component RunnerWindow inherits Window {
                             selected-index <=> root.trans-engine-idx;
                             selector-width: 140px;
                             selection-changed(idx) => { root.trans-engine-changed(idx); }
-                        }
-
-                        if root.trans-engine-idx == 1 : IconButton {
-                            icon: "⚙";
-                            clicked => { root.trans-toggle-settings(); }
-                        }
-                    }
-                }
-
-                // Baidu Settings Drawer
-                if root.trans-show-settings : Rectangle {
-                    border-radius: Theme.radius-control;
-                    border-width: 1px;
-                    border-color: Theme.primary;
-                    background: Theme.card-bg;
-
-                    VerticalLayout {
-                        padding: 10px;
-                        spacing: 8px;
-
-                        HorizontalLayout {
-                            alignment: space-between;
-                            Text {
-                                text: "🔑 百度翻译 API 密钥配置 (fanyi-api.baidu.com)";
-                                font-size: Theme.font-size-small;
-                                font-weight: 600;
-                                color: Theme.foreground;
-                                vertical-alignment: center;
-                            }
-                            IconButton {
-                                icon: "×";
-                                clicked => { root.trans-toggle-settings(); }
-                            }
-                        }
-
-                        HorizontalLayout {
-                            spacing: 8px;
-                            alignment: stretch;
-                            ValueInput {
-                                placeholder: "输入 百度翻译 App ID";
-                                text <=> root.trans-baidu-appid;
-                                horizontal-stretch: 1;
-                            }
-                            ValueInput {
-                                placeholder: "输入 密钥 (Secret Key)";
-                                text <=> root.trans-baidu-key;
-                                horizontal-stretch: 1;
-                            }
-                            ActionButton {
-                                text: "保存";
-                                is-primary: true;
-                                clicked => {
-                                    root.trans-save-settings(root.trans-baidu-appid, root.trans-baidu-key);
-                                }
-                            }
                         }
                     }
                 }
@@ -722,7 +694,257 @@ export component RunnerWindow inherits Window {
             }
 
             // =================================================================
-            // 4. GENERIC / DYNAMIC PLUGIN FALLBACK VIEW
+            // 4. AI PLUGIN VIEW (chat style)
+            // =================================================================
+            if root.plugin-kind == "ai" : VerticalLayout {
+                spacing: 8px;
+                alignment: stretch;
+                vertical-stretch: 1;
+
+                // Top Bar: Section Title + Copy / Clear
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: stretch;
+
+                    Text {
+                        text: "AI 对话";
+                        font-size: Theme.font-size-small;
+                        font-weight: 600;
+                        color: Theme.muted;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    IconButton {
+                        icon: "📋";
+                        clicked => { root.ai-copy(); }
+                    }
+                    IconButton {
+                        icon: "🗑";
+                        clicked => { root.ai-clear(); }
+                    }
+                }
+
+                // Chat Conversation List
+                Rectangle {
+                    vertical-stretch: 1;
+
+                    // 镜像消息模型用于观察变化：新消息入列 / 清空后滚动到底部
+                    property <[AiChatMessage]> observed-messages: root.ai-messages;
+                    changed observed-messages => {
+                        chat-list.viewport-y = Math.min(0px, chat-list.visible-height - chat-list.viewport-height);
+                    }
+
+                    chat-list := ListView {
+                        width: 100%;
+                        height: 100%;
+
+                        for msg in root.ai-messages : HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            padding-top: 4px;
+                            padding-bottom: 4px;
+
+                            // 用户消息靠右，助手消息靠左
+                            if msg.role == 0 : Rectangle { horizontal-stretch: 1; }
+
+                            Rectangle {
+                                max-width: chat-list.width * 0.8;
+                                border-radius: 10px;
+                                background: msg.role == 0 ? Theme.primary : Theme.card-bg;
+
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    padding-top: 7px;
+                                    padding-bottom: 7px;
+
+                                    Text {
+                                        text: msg.content;
+                                        font-size: Theme.font-size-body;
+                                        color: msg.role == 0 ? Theme.primary-fg : Theme.foreground;
+                                        wrap: word-wrap;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+
+                            if msg.role == 1 : Rectangle { horizontal-stretch: 1; }
+                        }
+                    }
+
+                    if root.ai-messages.length == 0 : Text {
+                        x: 14px;
+                        width: parent.width - 28px;
+                        y: (parent.height - self.preferred-height) / 2;
+                        text: "输入问题后点击「发送」\n开始新的 AI 对话";
+                        font-size: Theme.font-size-small;
+                        color: Theme.muted;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+
+                // Status / Error Note
+                HorizontalLayout {
+                    if root.ai-error != "" : InlineError {
+                        error-text: root.ai-error;
+                        horizontal-stretch: 1;
+                    }
+
+                    if root.ai-error == "" : InlineNote {
+                        text: root.ai-pending ? "正在请求 AI…" : root.ai-status;
+                        horizontal-stretch: 1;
+                    }
+                }
+
+                // Input Bar: draft input + send button
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: stretch;
+
+                    MultilineEditor {
+                        text <=> root.ai-input;
+                        min-height: 64px;
+                        vertical-stretch: 0;
+                        edited(t) => { root.ai-input-edited(t); }
+                    }
+
+                    ActionButton {
+                        text: root.ai-pending ? "回答中…" : "🚀 发送";
+                        is-primary: true;
+                        min-btn-width: 84px;
+                        enabled: !root.ai-pending && root.ai-input != "";
+                        clicked => { root.ai-send(); }
+                    }
+                }
+            }
+
+            // =================================================================
+            // 5. HOST SETTINGS VIEW (tray → 设置)
+            // =================================================================
+            if root.plugin-kind == "settings" : VerticalLayout {
+                spacing: 12px;
+                alignment: stretch;
+                vertical-stretch: 1;
+
+                // 百度翻译 API Card
+                Rectangle {
+                    border-radius: Theme.radius-control;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    background: Theme.card-bg;
+
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            alignment: space-between;
+                            Text {
+                                text: "🔑 百度翻译 API (fanyi-api.baidu.com)";
+                                font-size: Theme.font-size-small;
+                                font-weight: 600;
+                                color: Theme.foreground;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Text {
+                            text: "前往百度翻译开放平台申请开发者 AppID 与密钥，配置后可在「智能翻译」中选择百度引擎";
+                            font-size: Theme.font-size-small;
+                            color: Theme.muted;
+                            wrap: word-wrap;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: stretch;
+                            ValueInput {
+                                placeholder: "App ID";
+                                text <=> root.settings-baidu-appid;
+                                horizontal-stretch: 1;
+                            }
+                            ValueInput {
+                                placeholder: "密钥 (Secret Key)";
+                                text <=> root.settings-baidu-key;
+                                horizontal-stretch: 1;
+                            }
+                            ActionButton {
+                                text: "保存";
+                                is-primary: true;
+                                clicked => { root.button-clicked("btn_save_baidu"); }
+                            }
+                        }
+                    }
+                }
+
+                // AI Service Card
+                Rectangle {
+                    border-radius: Theme.radius-control;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    background: Theme.card-bg;
+
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            alignment: space-between;
+                            Text {
+                                text: "🤖 AI 服务（OpenAI 兼容接口）";
+                                font-size: Theme.font-size-small;
+                                font-weight: 600;
+                                color: Theme.foreground;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Text {
+                            text: "兼容 OpenAI 格式的接口均可（DeepSeek、GLM、Kimi 等），配置后供「AI 问答」使用";
+                            font-size: Theme.font-size-small;
+                            color: Theme.muted;
+                            wrap: word-wrap;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: stretch;
+                            ValueInput {
+                                placeholder: "接口地址 (Base URL)";
+                                text <=> root.settings-ai-base-url;
+                                horizontal-stretch: 2;
+                            }
+                            ValueInput {
+                                placeholder: "API Key";
+                                text <=> root.settings-ai-api-key;
+                                horizontal-stretch: 1;
+                            }
+                            ValueInput {
+                                placeholder: "模型 (Model)";
+                                text <=> root.settings-ai-model;
+                                horizontal-stretch: 1;
+                            }
+                            ActionButton {
+                                text: "保存";
+                                is-primary: true;
+                                clicked => { root.button-clicked("btn_save_ai"); }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                InlineNote {
+                    text: "配置保存后，重新打开对应工具即可生效";
+                }
+            }
+
+            // =================================================================
+            // 6. GENERIC / DYNAMIC PLUGIN FALLBACK VIEW
             if root.plugin-kind == "generic" : VerticalLayout {
                 spacing: 12px;
                 alignment: stretch;

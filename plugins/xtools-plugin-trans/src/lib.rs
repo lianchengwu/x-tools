@@ -13,7 +13,6 @@ pub struct TransPlugin {
     pub src_lang_idx: usize,
     pub dst_lang_idx: usize,
     pub config: TransConfig,
-    pub show_settings: bool,
     pub pending: bool,
     pub error: Option<String>,
     pub status: String,
@@ -63,7 +62,6 @@ impl XPlugin for TransPlugin {
             src_lang_idx: 0,
             dst_lang_idx: 0,
             config,
-            show_settings: false,
             pending: false,
             error: None,
             status,
@@ -90,39 +88,21 @@ impl XPlugin for TransPlugin {
 
         let mut children = Vec::new();
 
-        // 1. Top Bar: Section Title + Engine Selector + Settings Toggle Button
-        let top_bar = row(vec![
+        // 1. Top Bar: Section Title + Engine Selector
+        children.push(row(vec![
             label("原文 (Source)"),
             spacer(),
             select("select_engine", engine_options, self.config.engine_index),
-            button("btn_toggle_settings", "⚙"),
-        ]);
-        children.push(top_bar);
+        ]));
 
-        // 2. Settings Drawer Card (when active or when Baidu has missing credentials)
-        if self.show_settings {
-            let settings_card = card_with_title(
-                "🔑 百度翻译 API 密钥配置 (fanyi-api.baidu.com)",
-                vec![
-                    secondary_label("前往百度翻译开放平台申请开发者 AppID 与 密钥 (Key)"),
-                    row(vec![
-                        text_input("cfg_baidu_appid", &self.config.baidu_appid),
-                        text_input("cfg_baidu_key", &self.config.baidu_key),
-                        primary_button("btn_save_config", "保存"),
-                    ]),
-                ],
-            );
-            children.push(settings_card);
-        }
-
-        // 3. Source Text Input
+        // 2. Source Text Input
         children.push(text_area(
             "input_source",
             &self.source_text,
             5,
         ));
 
-        // 4. Middle Action Bar: Language selectors + Swap button + Translate button
+        // 3. Middle Action Bar: Language selectors + Swap button + Translate button
         let translate_btn_label = if self.pending {
             "翻译中…"
         } else {
@@ -138,7 +118,7 @@ impl XPlugin for TransPlugin {
         ]);
         children.push(lang_bar);
 
-        // 5. Target Text Label & Output Area
+        // 4. Target Text Label & Output Area
         children.push(label("译文 (Translation)"));
         children.push(text_area(
             "input_target",
@@ -146,7 +126,7 @@ impl XPlugin for TransPlugin {
             5,
         ));
 
-        // 6. Bottom Bar: Status / Error Note + Action buttons
+        // 5. Bottom Bar: Status / Error Note + Action buttons
         let mut bottom_items = Vec::new();
         if let Some(err) = &self.error {
             bottom_items.push(error_label(err));
@@ -175,8 +155,9 @@ impl XPlugin for TransPlugin {
                         && (self.config.baidu_appid.trim().is_empty()
                             || self.config.baidu_key.trim().is_empty())
                     {
-                        self.show_settings = true;
-                        self.error = Some("请先输入并保存百度翻译 AppID 和密钥。".to_string());
+                        self.error = Some(
+                            "请先在托盘菜单「设置」中配置百度翻译 AppID 与密钥。".to_string(),
+                        );
                         return Ok(UiResponse::UpdateView(self.render()));
                     }
 
@@ -232,35 +213,11 @@ impl XPlugin for TransPlugin {
                         }))
                     }
                 }
-                "btn_toggle_settings" => {
-                    self.show_settings = !self.show_settings;
-                    Ok(UiResponse::UpdateView(self.render()))
-                }
-                "btn_save_config" => {
-                    if let Ok(bytes) = serde_json::to_vec(&self.config) {
-                        let _ = host::storage_set("config.json", &bytes);
-                    }
-                    self.show_settings = false;
-                    self.error = None;
-                    Ok(UiResponse::ShowToast(Toast {
-                        message: "翻译配置已保存".to_string(),
-                        level: ToastLevel::Success,
-                        duration_ms: 2000,
-                    }))
-                }
                 _ => Ok(UiResponse::NoChange),
             },
             UiEvent::InputChanged { id, value } => match id.as_str() {
                 "input_source" => {
                     self.source_text = value;
-                    Ok(UiResponse::UpdateView(self.render()))
-                }
-                "cfg_baidu_appid" => {
-                    self.config.baidu_appid = value.trim().to_string();
-                    Ok(UiResponse::UpdateView(self.render()))
-                }
-                "cfg_baidu_key" => {
-                    self.config.baidu_key = value.trim().to_string();
                     Ok(UiResponse::UpdateView(self.render()))
                 }
                 _ => Ok(UiResponse::NoChange),
@@ -284,12 +241,6 @@ impl XPlugin for TransPlugin {
                     } else {
                         "引擎：MyMemory (免密钥)".to_string()
                     };
-                    if index == 1
-                        && (self.config.baidu_appid.trim().is_empty()
-                            || self.config.baidu_key.trim().is_empty())
-                    {
-                        self.show_settings = true;
-                    }
                     Ok(UiResponse::UpdateView(self.render()))
                 }
                 _ => Ok(UiResponse::NoChange),
@@ -335,26 +286,21 @@ mod tests {
     }
 
     #[test]
-    fn test_trans_plugin_settings_toggle_and_save() {
+    fn test_trans_plugin_baidu_missing_credentials_error() {
         let mut plugin = TransPlugin::init().unwrap();
-        assert!(!plugin.show_settings);
+        assert!(plugin.config.baidu_appid.is_empty());
 
-        plugin.handle_event(UiEvent::Click { id: "btn_toggle_settings".to_string() }).unwrap();
-        assert!(plugin.show_settings);
+        // 切到百度引擎（无密钥），直接翻译时给出指向托盘设置的提示
+        plugin.handle_event(UiEvent::SelectChanged {
+            id: "select_engine".to_string(),
+            index: 1,
+            value: "1".to_string(),
+        })
+        .unwrap();
+        plugin.source_text = "你好".to_string();
 
-        plugin.handle_event(UiEvent::InputChanged {
-            id: "cfg_baidu_appid".to_string(),
-            value: "test_appid".to_string(),
-        }).unwrap();
-        plugin.handle_event(UiEvent::InputChanged {
-            id: "cfg_baidu_key".to_string(),
-            value: "test_key".to_string(),
-        }).unwrap();
-        assert_eq!(plugin.config.baidu_appid, "test_appid");
-        assert_eq!(plugin.config.baidu_key, "test_key");
-
-        let resp = plugin.handle_event(UiEvent::Click { id: "btn_save_config".to_string() }).unwrap();
-        assert!(matches!(resp, UiResponse::ShowToast(_)));
-        assert!(!plugin.show_settings);
+        plugin.handle_event(UiEvent::Click { id: "btn_translate".to_string() }).unwrap();
+        let err = plugin.error.as_deref().unwrap();
+        assert!(err.contains("托盘") && err.contains("设置"));
     }
 }

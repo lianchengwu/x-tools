@@ -66,6 +66,7 @@ jobs:
           -p xtools-plugin-time
           -p xtools-plugin-json
           -p xtools-plugin-trans
+          -p xtools-plugin-ai
 
       - name: Test Workspace
         run: xvfb-run --auto-servernum cargo test --workspace
@@ -98,6 +99,7 @@ jobs:
           -p xtools-plugin-time
           -p xtools-plugin-json
           -p xtools-plugin-trans
+          -p xtools-plugin-ai
 
       - name: Test Workspace
         run: cargo test --workspace
