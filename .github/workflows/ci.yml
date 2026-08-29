@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check:
+    name: Check & Test (Ubuntu)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libgtk-4-dev \
+            libfontconfig1-dev \
+            libwayland-dev \
+            wayland-protocols \
+            gobject-introspection \
+            valac \
+            meson \
+            ninja-build \
+            xvfb \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev
+
+      - name: Install gtk4-layer-shell
+        run: |
+          git clone --depth 1 https://github.com/wmww/gtk4-layer-shell.git
+          cd gtk4-layer-shell
+          meson setup build --prefix=/usr \
+            -Dexamples=false \
+            -Ddocs=false \
+            -Dtests=false \
+            -Dvapi=false \
+            -Dintrospection=false
+          ninja -C build
+          sudo ninja -C build install
+          sudo ldconfig
+          cd ..
+          rm -rf gtk4-layer-shell
+
+      - name: Check Workspace
+        run: cargo check --workspace
+
+      - name: Test Workspace
+        run: xvfb-run --auto-servernum cargo test --workspace
+
+      - name: Build WASM Plugins
+        run: >
+          cargo build --target wasm32-unknown-unknown --release
+          -p xtools-plugin-time
+          -p xtools-plugin-json
+          -p xtools-plugin-trans
+
+      - name: Smoke Test Plugin Discovery
+        run: |
+          cargo build
+          ./target/debug/xtools list
+          ./target/debug/xtools list | grep -q "xtools.time"
+
+  windows:
+    name: Test & Build (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test Workspace
+        run: cargo test --workspace
+
+      - name: Build All Binaries
+        run: cargo build --workspace --release
+
+      - name: Build WASM Plugins
+        run: >
+          cargo build --target wasm32-unknown-unknown --release
+          -p xtools-plugin-time
+          -p xtools-plugin-json
+          -p xtools-plugin-trans
+
+      - name: Smoke Test CLI
+        shell: pwsh
+        run: ./target/release/xtools.exe --help

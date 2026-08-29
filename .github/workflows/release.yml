@@ -1,0 +1,203 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '[0-9]+.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build Linux Portable Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libgtk-4-dev \
+            libfontconfig1-dev \
+            libwayland-dev \
+            wayland-protocols \
+            gobject-introspection \
+            valac \
+            meson \
+            ninja-build \
+            rpm \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev
+
+      - name: Install gtk4-layer-shell
+        run: |
+          git clone --depth 1 https://github.com/wmww/gtk4-layer-shell.git
+          cd gtk4-layer-shell
+          meson setup build --prefix=/usr \
+            -Dexamples=false \
+            -Ddocs=false \
+            -Dtests=false \
+            -Dvapi=false \
+            -Dintrospection=false
+          ninja -C build
+          sudo ninja -C build install
+          sudo ldconfig
+          cd ..
+          rm -rf gtk4-layer-shell
+
+      - name: Build Host & Runner
+        run: cargo build --release
+
+      - name: Build WASM Plugins
+        run: >
+          cargo build --target wasm32-unknown-unknown --release
+          -p xtools-plugin-time
+          -p xtools-plugin-json
+          -p xtools-plugin-trans
+
+      - name: Extract Version
+        id: get_version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="0.4.0"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble Portable Layout
+        run: |
+          STAGING="target/xtools-staging"
+          mkdir -p "$STAGING/plugins"
+          cp target/release/xtools "$STAGING/"
+          cp target/wasm32-unknown-unknown/release/xtools_plugin_time.wasm  "$STAGING/plugins/time.wasm"
+          cp target/wasm32-unknown-unknown/release/xtools_plugin_json.wasm  "$STAGING/plugins/json.wasm"
+          cp target/wasm32-unknown-unknown/release/xtools_plugin_trans.wasm "$STAGING/plugins/trans.wasm"
+          cp README.md "$STAGING/" 2>/dev/null || true
+          cp LICENSE "$STAGING/" 2>/dev/null || true
+
+      - name: Create Tarball
+        run: |
+          mkdir -p target/dist
+          tar -czf "target/dist/xtools-${{ steps.get_version.outputs.VERSION }}-linux-x86_64.tar.gz" \
+            -C target/xtools-staging .
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            target/dist/*.tar.gz
+
+  build-windows:
+    name: Build Windows Portable Package
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Host & Runner
+        run: cargo build --workspace --release
+
+      - name: Build WASM Plugins
+        run: >
+          cargo build --target wasm32-unknown-unknown --release
+          -p xtools-plugin-time
+          -p xtools-plugin-json
+          -p xtools-plugin-trans
+
+      - name: Extract Version
+        id: get_version
+        shell: pwsh
+        run: |
+          $refName = $env:GITHUB_REF_NAME
+          if ($refName -match '^v(?<ver>.+)$') {
+            $ver = $Matches.ver
+          } elseif ($refName) {
+            $ver = $refName
+          } else {
+            $ver = "0.4.0"
+          }
+          "VERSION=$ver" >> $env:GITHUB_OUTPUT
+
+      - name: Assemble Portable Layout
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.get_version.outputs.VERSION }}"
+          $distDir = "target/dist"
+          $staging = "target/xtools-staging"
+          New-Item -ItemType Directory -Force -Path "$staging/plugins" | Out-Null
+
+          Copy-Item "target/release/xtools.exe" -Destination $staging
+          Copy-Item "target/wasm32-unknown-unknown/release/xtools_plugin_time.wasm"  -Destination "$staging/plugins/time.wasm"
+          Copy-Item "target/wasm32-unknown-unknown/release/xtools_plugin_json.wasm"  -Destination "$staging/plugins/json.wasm"
+          Copy-Item "target/wasm32-unknown-unknown/release/xtools_plugin_trans.wasm" -Destination "$staging/plugins/trans.wasm"
+          Copy-Item "README.md" -Destination $staging -ErrorAction SilentlyContinue
+          Copy-Item "LICENSE" -Destination $staging -ErrorAction SilentlyContinue
+
+          New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+          $zipPath = "$distDir/xtools-$ver-windows-x86_64.zip"
+          Compress-Archive -Path "$staging/*" -DestinationPath $zipPath -Force
+          Write-Host "Created $zipPath"
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-packages
+          path: |
+            target/dist/*.zip
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate Checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
