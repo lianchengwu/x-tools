@@ -46,11 +46,19 @@ impl WindowDragState {
             }
         }
         *self.is_native_drag.lock() = native_handled;
-        if !native_handled {
+        if native_handled {
+            // The compositor consumes the button release that ends the
+            // interactive move, so Slint never sees it and keeps the pointer
+            // grabbed by the drag TouchArea — swallowing every later click.
+            // Dispatch a synthetic release to hand the pointer back.
+            let _ = window.try_dispatch_event(slint::platform::WindowEvent::PointerReleased {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+                button: slint::platform::PointerEventButton::Left,
+            });
+            *self.start_pos.lock() = None;
+        } else {
             let pos = window.position();
             *self.start_pos.lock() = Some(pos);
-        } else {
-            *self.start_pos.lock() = None;
         }
     }
 
@@ -108,11 +116,17 @@ impl WindowResizeState {
             }
         }
         *self.is_native_resize.lock() = native_handled;
-        if !native_handled {
+        if native_handled {
+            // Same as dragging: the compositor eats the closing release event,
+            // so hand the pointer back to Slint with a synthetic release.
+            let _ = window.try_dispatch_event(slint::platform::WindowEvent::PointerReleased {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+                button: slint::platform::PointerEventButton::Left,
+            });
+            *self.start_size.lock() = None;
+        } else {
             let size = window.size();
             *self.start_size.lock() = Some(size);
-        } else {
-            *self.start_size.lock() = None;
         }
     }
 
