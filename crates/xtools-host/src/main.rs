@@ -1,7 +1,9 @@
 mod anim;
 mod layout;
-mod paint;
 mod runner;
+
+#[cfg(unix)]
+mod paint;
 
 #[cfg(unix)]
 mod input;
