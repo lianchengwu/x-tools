@@ -108,6 +108,8 @@ cp target/wasm32-unknown-unknown/release/xtools_plugin_*.wasm dist/plugins/
 cargo test --workspace
 ```
 
+> 注：`xtools-runtime` 的集成测试会加载已构建的 WASM 插件（优先 `dist/plugins/`，其次 `target/wasm32-unknown-unknown/release/`）；若尚未构建插件，相关测试会自动跳过。
+
 ### 使用
 
 ```bash

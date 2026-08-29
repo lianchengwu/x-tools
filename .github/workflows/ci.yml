@@ -60,15 +60,15 @@ jobs:
       - name: Check Workspace
         run: cargo check --workspace
 
-      - name: Test Workspace
-        run: xvfb-run --auto-servernum cargo test --workspace
-
       - name: Build WASM Plugins
         run: >
           cargo build --target wasm32-unknown-unknown --release
           -p xtools-plugin-time
           -p xtools-plugin-json
           -p xtools-plugin-trans
+
+      - name: Test Workspace
+        run: xvfb-run --auto-servernum cargo test --workspace
 
       - name: Smoke Test Plugin Discovery
         run: |
@@ -92,18 +92,18 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Test Workspace
-        run: cargo test --workspace
-
-      - name: Build All Binaries
-        run: cargo build --workspace --release
-
       - name: Build WASM Plugins
         run: >
           cargo build --target wasm32-unknown-unknown --release
           -p xtools-plugin-time
           -p xtools-plugin-json
           -p xtools-plugin-trans
+
+      - name: Test Workspace
+        run: cargo test --workspace
+
+      - name: Build All Binaries
+        run: cargo build --workspace --release
 
       - name: Smoke Test CLI
         shell: pwsh
