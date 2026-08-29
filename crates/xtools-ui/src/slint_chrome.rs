@@ -20,6 +20,34 @@ pub enum ResizeEdge {
     SouthEast,
 }
 
+/// Interactive moves/resizes are compositor-driven on Wayland: the closing
+/// button release is consumed by the compositor and never reaches us, so
+/// Slint keeps the pointer grabbed by the initiating TouchArea — swallowing
+/// every later click. Dispatch a synthetic release right away to hand the
+/// pointer back to Slint.
+fn dispatch_synthetic_pointer_release(window: &slint::Window) {
+    win_debug("synthetic pointer release dispatched");
+    let _ = window.try_dispatch_event(slint::platform::WindowEvent::PointerReleased {
+        position: slint::LogicalPosition::new(0.0, 0.0),
+        button: slint::platform::PointerEventButton::Left,
+    });
+}
+
+/// Compositor-driven interactive resizes on Wayland leave the client cursor
+/// latched on the resize shape (KWin restores the pre-grab client cursor, and
+/// Slint's hover state never changes afterwards to correct it). Client-driven
+/// `set_size` resizing uses plain press/move/release events, so it cannot
+/// stick; use it on Wayland and keep the compositor resize elsewhere.
+fn wayland_session() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+fn win_debug(msg: &str) {
+    if std::env::var_os("XTOOLS_WINDBG").is_some() {
+        eprintln!("[xtools-win] {msg}");
+    }
+}
+
 /// Helper for smooth window dragging on undecorated Slint windows.
 #[derive(Clone, Default)]
 pub struct WindowDragState {
@@ -47,16 +75,11 @@ impl WindowDragState {
         }
         *self.is_native_drag.lock() = native_handled;
         if native_handled {
-            // The compositor consumes the button release that ends the
-            // interactive move, so Slint never sees it and keeps the pointer
-            // grabbed by the drag TouchArea — swallowing every later click.
-            // Dispatch a synthetic release to hand the pointer back.
-            let _ = window.try_dispatch_event(slint::platform::WindowEvent::PointerReleased {
-                position: slint::LogicalPosition::new(0.0, 0.0),
-                button: slint::platform::PointerEventButton::Left,
-            });
+            win_debug("native drag started");
+            dispatch_synthetic_pointer_release(window);
             *self.start_pos.lock() = None;
         } else {
+            win_debug("native drag rejected, manual fallback");
             let pos = window.position();
             *self.start_pos.lock() = Some(pos);
         }
@@ -96,7 +119,7 @@ impl WindowResizeState {
     pub fn on_resize_started(&self, window: &slint::Window, edge: Option<ResizeEdge>) {
         let mut native_handled = false;
         #[cfg(feature = "slint-chrome")]
-        {
+        if !wayland_session() {
             use i_slint_backend_winit::WinitWindowAccessor;
             if let Some(edge) = edge {
                 let dir = match edge {
@@ -117,14 +140,11 @@ impl WindowResizeState {
         }
         *self.is_native_resize.lock() = native_handled;
         if native_handled {
-            // Same as dragging: the compositor eats the closing release event,
-            // so hand the pointer back to Slint with a synthetic release.
-            let _ = window.try_dispatch_event(slint::platform::WindowEvent::PointerReleased {
-                position: slint::LogicalPosition::new(0.0, 0.0),
-                button: slint::platform::PointerEventButton::Left,
-            });
+            win_debug("native resize started");
+            dispatch_synthetic_pointer_release(window);
             *self.start_size.lock() = None;
         } else {
+            win_debug("manual resize (wayland or fallback)");
             let size = window.size();
             *self.start_size.lock() = Some(size);
         }
