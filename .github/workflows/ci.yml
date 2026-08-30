@@ -130,10 +130,26 @@ jobs:
           -p xtools-protocol -p xtools-sdk -p xtools-ui
 
       - name: Test xtools-runtime
-        run: cargo test -p xtools-runtime
+        shell: pwsh
+        run: |
+          cargo test -p xtools-runtime --no-fail-fast 2>&1 | Tee-Object -FilePath runtime-test.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Select-String -Path runtime-test.log -Pattern 'error\[|error:|panicked at|test .* FAILED|^failures:' |
+              Select-Object -First 8 | ForEach-Object { "::error::$($_.Line)" }
+            exit $code
+          }
 
       - name: Test xtools-host
-        run: cargo test -p xtools-wasm
+        shell: pwsh
+        run: |
+          cargo test -p xtools-wasm --no-fail-fast 2>&1 | Tee-Object -FilePath host-test.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Select-String -Path host-test.log -Pattern 'error\[|error:|panicked at|test .* FAILED|^failures:' |
+              Select-Object -First 8 | ForEach-Object { "::error::$($_.Line)" }
+            exit $code
+          }
 
       - name: Test Plugins & Runner
         run: >
