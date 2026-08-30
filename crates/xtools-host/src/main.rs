@@ -24,7 +24,7 @@ mod tray;
 mod unix;
 
 fn print_help() {
-    println!("xtools v0.5.1 (Unified WASM Floating Toolbox)");
+    println!("xtools v0.5.2 (Unified WASM Floating Toolbox)");
     println!("Usage:");
     println!("  xtools                    # Start floating orb and system tray (Host mode)");
     println!("  xtools host               # Start floating orb and system tray");
