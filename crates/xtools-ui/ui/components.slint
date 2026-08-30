@@ -7,10 +7,12 @@ export component ActionButton inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> is-primary: false;
     in property <length> min-btn-width: 68px;
+    // 允许调用方覆盖高度（默认标准控件高度）
+    in property <length> btn-height: Theme.control-height;
     callback clicked();
 
     min-width: root.min-btn-width;
-    height: Theme.control-height;
+    height: root.btn-height;
     border-radius: Theme.radius-control;
     border-width: root.is-primary ? 0px : 1px;
     border-color: !root.enabled ? Theme.border-subtle : (touch.has-hover ? Theme.border-hover : Theme.border);
@@ -321,7 +323,8 @@ export component DropdownPopup inherits Rectangle {
     drop-shadow-blur: 16px;
     drop-shadow-color: Theme.drop-shadow;
     drop-shadow-offset-y: 4px;
-    height: min(260px, max(68px, root.options.length * 32px + 10px));
+    // 弹层高度随选项数自适应：每项 30px + 项间 2px + 上下 4px 内边距，避免出现空白行
+    height: min(260px, max(38px, root.options.length * 32px + 6px));
     ScrollView {
         VerticalLayout {
             padding: 4px;
@@ -360,12 +363,14 @@ export component DropdownSelector inherits Rectangle {
     in property <[string]> options;
     in-out property <int> selected-index: 0;
     in property <length> selector-width: 112px;
+    // 允许调用方覆盖高度（默认标准控件高度）
+    in property <length> selector-height: Theme.control-height;
     // 为 true 时下拉列表向上弹出（用于靠近窗口底部的场景）
     in property <bool> open-up: false;
     callback selection-changed(int);
 
     width: root.selector-width;
-    height: Theme.control-height;
+    height: root.selector-height;
     border-radius: Theme.radius-control;
     border-width: 1px;
     border-color: popup-area.has-hover ? Theme.border-hover : Theme.border;
@@ -412,13 +417,16 @@ export component DropdownSelector inherits Rectangle {
         }
     }
 
+    // 弹层高度：与 DropdownPopup 内部公式保持一致（每项 32px 含间距 + 8px 内边距）
+    property <length> popup-height: min(260px, max(38px, root.options.length * 32px + 6px));
+
     popup := PopupWindow {
         x: 0px;
         y: root.open-up
-            ? -(min(260px, max(68px, root.options.length * 32px + 10px))) - 4px
+            ? -root.popup-height - 4px
             : root.height + 4px;
         width: root.width;
-        height: min(260px, max(68px, root.options.length * 32px + 10px));
+        height: root.popup-height;
 
         DropdownPopup {
             width: 100%;

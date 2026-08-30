@@ -119,15 +119,16 @@ component ChatComposer inherits Rectangle {
             }
         }
 
-        // 框内底部工具条：模型选择 + 发送
+        // 框内底部工具条：模型选择 + 发送（整体缩至 80%，比编辑区更轻量）
         HorizontalLayout {
-            spacing: 8px;
+            spacing: 6px;
             alignment: stretch;
 
             if root.model-options.length > 0 : DropdownSelector {
                 options: root.model-options;
                 selected-index <=> root.model-index;
-                selector-width: 220px;
+                selector-width: 176px;
+                selector-height: Theme.control-height * 0.8;
                 open-up: true;
                 selection-changed(idx) => { root.model-changed(idx); }
             }
@@ -147,7 +148,8 @@ component ChatComposer inherits Rectangle {
                 // 生成中变为「停止」按钮
                 text: root.pending ? "■" : "➤";
                 is-primary: true;
-                min-btn-width: 48px;
+                min-btn-width: 38px;
+                btn-height: Theme.control-height * 0.8;
                 enabled: root.pending || root.text != "";
                 clicked => { root.send-clicked(); }
             }
@@ -162,8 +164,9 @@ export component RunnerWindow inherits Window {
     default-font-family: "sans-serif";
     min-width: 420px;
     min-height: 320px;
-    preferred-width: 560px;
-    preferred-height: 520px;
+    // 全部窗口统一放大到 1.5 倍（840×780）
+    preferred-width: 840px;
+    preferred-height: 780px;
 
     in-out property <string> window-title: "xtools";
     in-out property <string> window-icon: "⚡";
@@ -1108,51 +1111,63 @@ export component RunnerWindow inherits Window {
                     width: 100%;
                     height: 100%;
                     viewport-width: self.visible-width;
+                    // 视口高度取内容首选高度：各卡片自上而下排列，不随窗口高度拉伸
+                    viewport-height: settings-page.preferred-height;
 
-                    VerticalLayout {
-                        spacing: 12px;
+                    settings-page := VerticalLayout {
+                        spacing: 14px;
+                        alignment: start;
 
-                        // 百度翻译 API Card
+                        // 隐私说明：全部配置只写本地，不经任何服务器
+                        HorizontalLayout {
+                            spacing: 6px;
+                            alignment: start;
+
+                            Text {
+                                text: "🔒";
+                                font-size: Theme.font-size-small;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                text: "所有配置与 API Key 仅保存在本机（本地数据库），不会上传到任何服务器";
+                                font-size: Theme.font-size-small;
+                                color: Theme.muted;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // 百度翻译 API Card（单行紧凑：标题 + AppID + 密钥）
                         Rectangle {
                             border-radius: Theme.radius-control;
                             border-width: 1px;
                             border-color: Theme.border;
                             background: Theme.card-bg;
 
-                            VerticalLayout {
-                                padding: 12px;
-                                spacing: 8px;
+                            HorizontalLayout {
+                                padding: 14px;
+                                spacing: 10px;
 
                                 Text {
-                                    text: "🔑 百度翻译 API (fanyi-api.baidu.com)";
+                                    text: "🔑 百度翻译 API";
                                     font-size: Theme.font-size-small;
                                     font-weight: 600;
                                     color: Theme.foreground;
                                     vertical-alignment: center;
                                 }
 
-                                Text {
-                                    text: "前往百度翻译开放平台申请开发者 AppID 与密钥，配置后可在「智能翻译」中选择百度引擎";
-                                    font-size: Theme.font-size-small;
-                                    color: Theme.muted;
-                                    wrap: word-wrap;
+                                ValueInput {
+                                    placeholder: "App ID";
+                                    text <=> root.settings-baidu-appid;
+                                    horizontal-stretch: 1;
+                                    edited(t) => { root.input-changed("settings_baidu_appid", t); }
                                 }
 
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    alignment: stretch;
-                                    ValueInput {
-                                        placeholder: "App ID";
-                                        text <=> root.settings-baidu-appid;
-                                        horizontal-stretch: 1;
-                                        edited(t) => { root.input-changed("settings_baidu_appid", t); }
-                                    }
-                                    ValueInput {
-                                        placeholder: "密钥 (Secret Key)";
-                                        text <=> root.settings-baidu-key;
-                                        horizontal-stretch: 1;
-                                        edited(t) => { root.input-changed("settings_baidu_key", t); }
-                                    }
+                                ValueInput {
+                                    placeholder: "密钥 (Secret Key)";
+                                    text <=> root.settings-baidu-key;
+                                    horizontal-stretch: 1;
+                                    edited(t) => { root.input-changed("settings_baidu_key", t); }
                                 }
                             }
                         }
@@ -1165,8 +1180,8 @@ export component RunnerWindow inherits Window {
                             background: Theme.card-bg;
 
                             VerticalLayout {
-                                padding: 12px;
-                                spacing: 8px;
+                                padding: 14px;
+                                spacing: 10px;
 
                                 HorizontalLayout {
                                     spacing: 8px;
@@ -1212,9 +1227,10 @@ export component RunnerWindow inherits Window {
                                     background: Theme.secondary;
 
                                     VerticalLayout {
-                                        padding: 10px;
-                                        spacing: 8px;
+                                        padding: 12px;
+                                        spacing: 10px;
 
+                                        // 第一行：名称 + 删除
                                         HorizontalLayout {
                                             spacing: 8px;
                                             alignment: stretch;
@@ -1225,24 +1241,28 @@ export component RunnerWindow inherits Window {
                                                 horizontal-stretch: 1;
                                                 edited(t) => { root.ai-provider-field-changed(p.id, "name", t); }
                                             }
-                                            ValueInput {
-                                                placeholder: "接口地址 (Base URL)";
-                                                text: p.base-url;
-                                                horizontal-stretch: 2;
-                                                edited(t) => { root.ai-provider-field-changed(p.id, "base_url", t); }
-                                            }
-                                            ValueInput {
-                                                placeholder: "API Key";
-                                                text: p.api-key;
-                                                horizontal-stretch: 2;
-                                                edited(t) => { root.ai-provider-field-changed(p.id, "api_key", t); }
-                                            }
+
                                             IconButton {
                                                 icon: "🗑";
                                                 clicked => { root.ai-provider-removed(p.id); }
                                             }
                                         }
 
+                                        // 第二行：接口地址（整行）
+                                        ValueInput {
+                                            placeholder: "接口地址 (Base URL)，如 https://api.deepseek.com/v1";
+                                            text: p.base-url;
+                                            edited(t) => { root.ai-provider-field-changed(p.id, "base_url", t); }
+                                        }
+
+                                        // 第三行：密钥（整行）
+                                        ValueInput {
+                                            placeholder: "API Key";
+                                            text: p.api-key;
+                                            edited(t) => { root.ai-provider-field-changed(p.id, "api_key", t); }
+                                        }
+
+                                        // 第四行：模型 chips + 添加
                                         HorizontalLayout {
                                             spacing: 8px;
                                             alignment: stretch;
@@ -1311,7 +1331,7 @@ export component RunnerWindow inherits Window {
 
                                             ValueInput {
                                                 placeholder: "模型名";
-                                                width: 150px;
+                                                width: 180px;
                                                 edited(t) => { root.ai-new-model-changed(p.id, t); }
                                                 accepted(t) => { root.ai-model-added(p.id); }
                                             }
@@ -1335,7 +1355,7 @@ export component RunnerWindow inherits Window {
                             background: Theme.card-bg;
 
                             VerticalLayout {
-                                padding: 12px;
+                                padding: 14px;
                                 spacing: 8px;
 
                                 Text {
