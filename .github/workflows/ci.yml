@@ -107,6 +107,21 @@ jobs:
       - name: Build All Binaries
         run: cargo build --workspace --release
 
+      - name: Assemble Portable Dist
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path target/release/plugins | Out-Null
+          Copy-Item target/wasm32-unknown-unknown/release/xtools_plugin_time.wasm  target/release/plugins/time.wasm
+          Copy-Item target/wasm32-unknown-unknown/release/xtools_plugin_json.wasm  target/release/plugins/json.wasm
+          Copy-Item target/wasm32-unknown-unknown/release/xtools_plugin_trans.wasm target/release/plugins/trans.wasm
+          Copy-Item target/wasm32-unknown-unknown/release/xtools_plugin_ai.wasm    target/release/plugins/ai.wasm
+
+      - name: Smoke Test Windows Singleton (Host Orb & Tray)
+        shell: pwsh
+        env:
+          SLINT_BACKEND: winit-software
+        run: ./scripts/windows-singleton-smoke.ps1 -TargetDir target/release
+
       - name: Smoke Test CLI
         shell: pwsh
         run: ./target/release/xtools.exe --help

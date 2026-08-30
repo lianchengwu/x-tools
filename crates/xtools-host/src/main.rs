@@ -7,6 +7,10 @@ mod runner;
 mod settings_window;
 mod window_prefs;
 
+// 软件渲染器与 Windows 宿主；Linux 测试构建同样编译 paint 以跑渲染单测
+#[cfg(any(windows, test))]
+mod windows;
+
 #[cfg(unix)]
 mod paint;
 
@@ -42,9 +46,12 @@ fn main() {
             #[cfg(unix)]
             unix::run();
 
-            #[cfg(not(unix))]
+            #[cfg(windows)]
+            windows::run();
+
+            #[cfg(not(any(unix, windows)))]
             {
-                eprintln!("Windows host follows the same engine.");
+                eprintln!("Unsupported platform: host mode requires unix or windows.");
             }
         }
         Some("-h") | Some("--help") | Some("help") => {

@@ -5,6 +5,10 @@ pub fn ease_out_cubic(x: f64) -> f64 {
     1.0 - t * t * t
 }
 
+pub fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    a + (b - a) * t
+}
+
 pub fn progress(now_us: i64, start_us: i64) -> f64 {
     let elapsed = now_us.saturating_sub(start_us);
     (elapsed as f64 / DURATION_US as f64).clamp(0.0, 1.0)
