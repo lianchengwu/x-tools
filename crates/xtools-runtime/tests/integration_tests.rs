@@ -281,11 +281,13 @@ fn collect_drafts(node: &UiNode, out: &mut Vec<String>) {
     }
 }
 
-fn load_ai_instance() -> Option<(xtools_runtime::PluginInstance, PathBuf)> {
+/// 每个 AI 测试用独立临时目录：libtest 并行执行时共享目录会被
+/// 其它测试的 remove_dir_all 删掉正在使用的 SQLite 存储（Windows 上尤甚）。
+fn load_ai_instance(test: &str) -> Option<(xtools_runtime::PluginInstance, PathBuf)> {
     let Some(path) = require_plugin_artifact("test_ai_plugin_flow", "ai") else {
         return None;
     };
-    let temp_dir = std::env::temp_dir().join(format!("xtools-ai-test-{}", std::process::id()));
+    let temp_dir = std::env::temp_dir().join(format!("xtools-ai-test-{test}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
     Some((PluginLoader::new().with_storage_root(temp_dir.clone()).load_instance(&path).expect("load ai plugin"), temp_dir))
 }
@@ -300,7 +302,7 @@ fn seed_ai_config(temp_dir: &PathBuf, selected_model: &str) {
 
 #[test]
 fn test_ai_send_phase_a_and_assistant_done_success() {
-    let Some((mut instance, temp_dir)) = load_ai_instance() else {
+    let Some((mut instance, temp_dir)) = load_ai_instance("test_ai_send_phase_a_and_assistant_done_success") else {
         return;
     };
     seed_ai_config(&temp_dir, "m1");
@@ -353,7 +355,7 @@ fn test_ai_send_phase_a_and_assistant_done_success() {
 
 #[test]
 fn test_ai_assistant_done_error_rolls_back() {
-    let Some((mut instance, temp_dir)) = load_ai_instance() else {
+    let Some((mut instance, temp_dir)) = load_ai_instance("test_ai_assistant_done_error_rolls_back") else {
         return;
     };
     seed_ai_config(&temp_dir, "m1");
@@ -389,7 +391,7 @@ fn test_ai_assistant_done_error_rolls_back() {
 
 #[test]
 fn test_ai_assistant_done_stale_is_ignored() {
-    let Some((mut instance, temp_dir)) = load_ai_instance() else {
+    let Some((mut instance, temp_dir)) = load_ai_instance("test_ai_assistant_done_stale_is_ignored") else {
         return;
     };
     seed_ai_config(&temp_dir, "m1");
@@ -418,7 +420,7 @@ fn test_ai_assistant_done_stale_is_ignored() {
 
 #[test]
 fn test_ai_assistant_done_abort_keeps_partial() {
-    let Some((mut instance, temp_dir)) = load_ai_instance() else {
+    let Some((mut instance, temp_dir)) = load_ai_instance("test_ai_assistant_done_abort_keeps_partial") else {
         return;
     };
     seed_ai_config(&temp_dir, "m1");
