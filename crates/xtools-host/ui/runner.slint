@@ -291,6 +291,9 @@ export component RunnerWindow inherits Window {
     in-out property <string> ai-status: "";
     in-out property <[string]> ai-model-options: [];
     in-out property <int> ai-model-index: 0;
+    // 会话列表（多会话切换）
+    in-out property <[string]> ai-session-options: [];
+    in-out property <int> ai-session-index: 0;
     // 流式生成中：当前已收到的完整回答文本（宿主后台线程增量回填）
     in-out property <string> ai-stream-text: "";
 
@@ -300,6 +303,8 @@ export component RunnerWindow inherits Window {
     callback ai-input-edited(string);
     callback ai-model-changed(int);
     callback ai-copy-code(string);
+    callback ai-session-changed(int);
+    callback ai-new-session();
 
     // -------------------------------------------------------------------------
     // Generic Plugin Fallback State
@@ -855,12 +860,19 @@ export component RunnerWindow inherits Window {
                 alignment: stretch;
                 vertical-stretch: 1;
 
-                // Top Bar: Section Title + Copy / Clear
+                // Top Bar: 会话切换 + 新建 + 复制 / 删除
                 HorizontalLayout {
                     spacing: 6px;
                     alignment: stretch;
 
-                    Text {
+                    if root.ai-session-options.length > 0 : DropdownSelector {
+                        options: root.ai-session-options;
+                        selected-index <=> root.ai-session-index;
+                        selector-width: 280px;
+                        selection-changed(idx) => { root.ai-session-changed(idx); }
+                    }
+
+                    if root.ai-session-options.length == 0 : Text {
                         text: "AI 对话";
                         font-size: Theme.font-size-small;
                         font-weight: 600;
@@ -870,6 +882,10 @@ export component RunnerWindow inherits Window {
 
                     Rectangle { horizontal-stretch: 1; }
 
+                    IconButton {
+                        icon: "＋";
+                        clicked => { root.ai-new-session(); }
+                    }
                     IconButton {
                         icon: "📋";
                         clicked => { root.ai-copy(); }
@@ -946,6 +962,7 @@ export component RunnerWindow inherits Window {
 
                                             // 代码段：语言标注 + 复制 + 逐 token 着色
                                             if seg.is-code : Rectangle {
+                                                min-width: chat-list.width * 0.5;
                                                 border-radius: Theme.radius-control;
                                                 background: Theme.code-bg;
                                                 border-width: 1px;

@@ -811,6 +811,24 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
             });
         }
         {
+            let h = handle_event.clone();
+            ui.on_ai_session_changed(move |idx| {
+                h(UiEvent::SelectChanged {
+                    id: "select_session".to_string(),
+                    index: idx as usize,
+                    value: idx.to_string(),
+                });
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_ai_new_session(move || {
+                h(UiEvent::Click {
+                    id: "btn_new_session".to_string(),
+                });
+            });
+        }
+        {
             let ui_w = ui.as_weak();
             ui.on_ai_copy_code(move |code| {
                 copy_to_clipboard(&code.to_string());
@@ -1254,6 +1272,8 @@ fn sync_ai_view(ui: &RunnerWindow, root: &UiNode) {
     let mut status_text = String::new();
     let mut model_options: Vec<String> = Vec::new();
     let mut model_index = 0usize;
+    let mut session_options: Vec<String> = Vec::new();
+    let mut session_index = 0usize;
 
     collect_ai_nodes(
         root,
@@ -1263,6 +1283,8 @@ fn sync_ai_view(ui: &RunnerWindow, root: &UiNode) {
         &mut status_text,
         &mut model_options,
         &mut model_index,
+        &mut session_options,
+        &mut session_index,
     );
 
     let items: Vec<AiChatMessage> = messages
@@ -1300,6 +1322,11 @@ fn sync_ai_view(ui: &RunnerWindow, root: &UiNode) {
         model_options.into_iter().map(Into::into).collect();
     ui.set_ai_model_options(slint::ModelRc::new(slint::VecModel::from(options_model)));
     ui.set_ai_model_index(model_index as i32);
+
+    let session_model: Vec<slint::SharedString> =
+        session_options.into_iter().map(Into::into).collect();
+    ui.set_ai_session_options(slint::ModelRc::new(slint::VecModel::from(session_model)));
+    ui.set_ai_session_index(session_index as i32);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1311,6 +1338,8 @@ fn collect_ai_nodes(
     status_text: &mut String,
     model_options: &mut Vec<String>,
     model_index: &mut usize,
+    session_options: &mut Vec<String>,
+    session_index: &mut usize,
 ) {
     match node {
         UiNode::Container { children, .. } => {
@@ -1323,6 +1352,8 @@ fn collect_ai_nodes(
                     status_text,
                     model_options,
                     model_index,
+                    session_options,
+                    session_index,
                 );
             }
         }
@@ -1340,9 +1371,16 @@ fn collect_ai_nodes(
             selected_index,
             ..
         } => {
-            if id == "select_model" {
-                *model_options = options.iter().map(|o| o.label.clone()).collect();
-                *model_index = *selected_index;
+            match id.as_str() {
+                "select_model" => {
+                    *model_options = options.iter().map(|o| o.label.clone()).collect();
+                    *model_index = *selected_index;
+                }
+                "select_session" => {
+                    *session_options = options.iter().map(|o| o.label.clone()).collect();
+                    *session_index = *selected_index;
+                }
+                _ => {}
             }
         }
         UiNode::Label { text: t, variant, .. } => {

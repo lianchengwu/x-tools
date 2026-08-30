@@ -347,8 +347,8 @@ fn test_ai_send_phase_a_and_assistant_done_success() {
     assert_eq!(msgs[1].1, "这是回答");
 
     // 会话已持久化（供下次打开恢复）
-    let history = std::fs::read_to_string(temp_dir.join("xtools.ai").join("history.json")).unwrap();
-    assert!(history.contains("这是回答"), "{history}");
+    let sessions = std::fs::read_to_string(temp_dir.join("xtools.ai").join("sessions.json")).unwrap();
+    assert!(sessions.contains("这是回答"), "{sessions}");
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }

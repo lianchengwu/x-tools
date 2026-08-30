@@ -1,17 +1,34 @@
 pub mod engine;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use engine::AiConfig;
 use serde::{Deserialize, Serialize};
 use xtools_sdk::*;
 
-/// 对话历史持久化上限（条数），防止无限增长
+/// 单个会话的历史上限（条数），防止无限增长
 const MAX_HISTORY: usize = 100;
-const HISTORY_KEY: &str = "history.json";
+/// 会话总数上限，超出时淘汰最旧的会话
+const MAX_SESSIONS: usize = 20;
+const SESSIONS_KEY: &str = "sessions.json";
+const LEGACY_HISTORY_KEY: &str = "history.json";
+
+/// 一个会话：标题 + 消息列表
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatSession {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub messages: Vec<ChatMessage>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiPlugin {
-    /// 完整对话历史（多轮上下文），持久化到插件存储
-    pub messages: Vec<ChatMessage>,
-    /// 底部输入框草稿
+    /// 全部会话（多会话管理），持久化到插件存储
+    pub sessions: Vec<ChatSession>,
+    /// 当前激活的会话 id
+    pub active_session_id: String,
+    /// 底部输入框草稿（全局，不随会话切换）
     pub draft: String,
     pub config: AiConfig,
     pub pending: bool,
@@ -19,32 +36,140 @@ pub struct AiPlugin {
     pub status: String,
 }
 
-/// 持久化的会话快照
+/// 会话持久化快照
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct PersistedSessions {
+    #[serde(default)]
+    sessions: Vec<ChatSession>,
+    #[serde(default)]
+    active_id: String,
+}
+
+/// 旧版单会话快照（history.json），仅用于迁移
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct PersistedChat {
     #[serde(default)]
     messages: Vec<ChatMessage>,
-    #[serde(default)]
-    draft: String,
 }
 
 impl AiPlugin {
-    /// 将当前对话与草稿写入插件存储，供下次打开恢复
-    fn persist(&self) {
-        if let Ok(bytes) = serde_json::to_vec(&PersistedChat {
-            messages: self.messages.clone(),
-            draft: self.draft.clone(),
-        }) {
-            let _ = host::storage_set(HISTORY_KEY, &bytes);
+    /// 毫秒时间戳 + 进程内计数器，保证同一毫秒内创建的会话 id 也不重复
+    fn new_session_id() -> String {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let millis = host::now_millis().max(0) as u64;
+        let n = millis
+            .wrapping_mul(1000)
+            .wrapping_add(COUNTER.fetch_add(1, Ordering::Relaxed));
+        format!("s{n}")
+    }
+
+    fn fresh_session() -> ChatSession {
+        ChatSession {
+            id: Self::new_session_id(),
+            title: "新会话".to_string(),
+            messages: Vec::new(),
         }
     }
 
-    fn load_persisted() -> PersistedChat {
-        host::storage_get(HISTORY_KEY)
-            .ok()
-            .flatten()
-            .and_then(|bytes| serde_json::from_slice::<PersistedChat>(&bytes).ok())
-            .unwrap_or_default()
+    /// 当前激活会话的可变引用（保证始终存在）
+    fn active_mut(&mut self) -> &mut ChatSession {
+        if !self.sessions.iter().any(|s| s.id == self.active_session_id) {
+            if let Some(first) = self.sessions.first() {
+                self.active_session_id = first.id.clone();
+            } else {
+                let s = Self::fresh_session();
+                self.active_session_id = s.id.clone();
+                self.sessions.push(s);
+            }
+        }
+        self.sessions
+            .iter_mut()
+            .find(|s| s.id == self.active_session_id)
+            .expect("active session ensured")
+    }
+
+    fn active(&self) -> &ChatSession {
+        self.sessions
+            .iter()
+            .find(|s| s.id == self.active_session_id)
+            .or_else(|| self.sessions.first())
+            .expect("at least one session always exists")
+    }
+
+    /// 会话下拉选项：(标签, id)。标签形如「标题 (条数)」
+    fn session_options(&self) -> Vec<(String, String)> {
+        self.sessions
+            .iter()
+            .map(|s| (format!("{} ({})", s.title, s.messages.len()), s.id.clone()))
+            .collect()
+    }
+
+    fn active_session_index(&self) -> usize {
+        self.session_options()
+            .iter()
+            .position(|(_, id)| *id == self.active_session_id)
+            .unwrap_or(0)
+    }
+
+    fn select_session_by_index(&mut self, index: usize) {
+        if let Some((_, id)) = self.session_options().get(index) {
+            self.active_session_id = id.clone();
+        }
+    }
+
+    /// 会话标题为空或仍为默认值时，用首条用户消息自动命名
+    fn ensure_session_title(session: &mut ChatSession) {
+        let default_like = session.title.is_empty() || session.title == "新会话";
+        if default_like {
+            if let Some(m) = session.messages.iter().find(|m| m.role == ChatRole::User) {
+                let title: String = m.content.chars().take(16).collect();
+                session.title = title;
+            }
+        }
+    }
+
+    /// 将全部会话写入插件存储，供下次打开恢复
+    fn persist(&self) {
+        if let Ok(bytes) = serde_json::to_vec(&PersistedSessions {
+            sessions: self.sessions.clone(),
+            active_id: self.active_session_id.clone(),
+        }) {
+            let _ = host::storage_set(SESSIONS_KEY, &bytes);
+        }
+    }
+
+    /// 读取会话；旧版 history.json 自动迁移为第一个会话
+    fn load_persisted() -> PersistedSessions {
+        if let Some(bytes) = host::storage_get(SESSIONS_KEY).ok().flatten() {
+            if let Ok(saved) = serde_json::from_slice::<PersistedSessions>(&bytes) {
+                if !saved.sessions.is_empty() {
+                    return saved;
+                }
+            }
+        }
+        // 迁移：旧版单会话
+        if let Some(bytes) = host::storage_get(LEGACY_HISTORY_KEY).ok().flatten() {
+            if let Ok(old) = serde_json::from_slice::<PersistedChat>(&bytes) {
+                if !old.messages.is_empty() {
+                    let title = old
+                        .messages
+                        .iter()
+                        .find(|m| m.role == ChatRole::User)
+                        .map(|m| m.content.chars().take(16).collect())
+                        .unwrap_or_else(|| "历史对话".to_string());
+                    let id = Self::new_session_id();
+                    return PersistedSessions {
+                        sessions: vec![ChatSession {
+                            id: id.clone(),
+                            title,
+                            messages: old.messages,
+                        }],
+                        active_id: id,
+                    };
+                }
+            }
+        }
+        PersistedSessions::default()
     }
 
     /// 历史超限时从最旧开始裁剪
@@ -54,9 +179,9 @@ impl AiPlugin {
         }
     }
 
-    /// 请求失败/无内容时回滚末尾的用户消息到草稿，便于修改后重试
+    /// 请求失败/无内容时回滚当前会话末尾的用户消息到草稿，便于修改后重试
     fn rollback_last_user_message(&mut self) {
-        if let Some(m) = self.messages.pop() {
+        if let Some(m) = self.active_mut().messages.pop() {
             if m.role == ChatRole::User {
                 self.draft = m.content;
             }
@@ -69,7 +194,7 @@ impl XPlugin for AiPlugin {
         PluginManifest {
             id: "xtools.ai".to_string(),
             name: "AI 问答".to_string(),
-            version: "0.4.0".to_string(),
+            version: "0.5.0".to_string(),
             description: "基于 OpenAI 兼容接口的多轮 AI 对话工具，打开时自动填入剪贴板内容".to_string(),
             author: "xtools".to_string(),
             mark: "智".to_string(),
@@ -102,22 +227,35 @@ impl XPlugin for AiPlugin {
             }
         }
 
-        // 恢复上次对话与草稿
+        // 恢复会话（旧版单会话 history.json 自动迁移）
         let saved = Self::load_persisted();
-        let mut messages = saved.messages;
-        Self::trim_history(&mut messages);
+        let mut sessions = saved.sessions;
+        for s in &mut sessions {
+            Self::trim_history(&mut s.messages);
+        }
+        if sessions.is_empty() {
+            sessions.push(Self::fresh_session());
+        }
+        let active_session_id = if sessions.iter().any(|s| s.id == saved.active_id) {
+            saved.active_id
+        } else {
+            sessions[0].id.clone()
+        };
 
         // 打开工具即自动把剪贴板内容填入输入框（优先于已保存草稿），是否发送由用户手动点击决定
         let clipboard = host::clipboard_read().unwrap_or_default();
+        let has_history = sessions
+            .iter()
+            .any(|s| !s.messages.is_empty());
         let (draft, status) = if !clipboard.trim().is_empty() {
             (
                 clipboard,
                 "AI 就绪：已自动填入剪贴板内容，点击「发送」提问".to_string(),
             )
-        } else if !messages.is_empty() {
-            (saved.draft, "AI 就绪：已恢复上次对话，可继续追问".to_string())
+        } else if has_history {
+            (String::new(), "AI 就绪：已恢复上次会话，可继续追问".to_string())
         } else {
-            (saved.draft, "AI 就绪：剪贴板为空，请输入问题".to_string())
+            (String::new(), "AI 就绪：剪贴板为空，请输入问题".to_string())
         };
         let status = match config.selected_provider() {
             Some(_p) if !config.selected_model.is_empty() => {
@@ -127,7 +265,8 @@ impl XPlugin for AiPlugin {
         };
 
         Ok(Self {
-            messages,
+            sessions,
+            active_session_id,
             draft,
             config,
             pending: false,
@@ -143,14 +282,26 @@ impl XPlugin for AiPlugin {
         children.push(row(vec![
             label("AI 对话"),
             spacer(),
+            button("btn_new_session", "➕"),
             button("btn_copy", "📋"),
             button("btn_clear", "🗑"),
         ]));
 
-        // 2. Chat Conversation View
-        children.push(chat_viewer("chat_messages", self.messages.clone()));
+        // 2. Chat Conversation View（当前会话）
+        children.push(chat_viewer("chat_messages", self.active().messages.clone()));
 
-        // 3. Model Selector（AI 窗口输入框底部展示与切换）
+        // 3. Session / Model Selectors（AI 窗口顶栏与输入框底部展示与切换）
+        let session_opts: Vec<SelectOption> = self
+            .session_options()
+            .into_iter()
+            .map(|(label, id)| SelectOption::new(id, label))
+            .collect();
+        children.push(select(
+            "select_session",
+            session_opts,
+            self.active_session_index(),
+        ));
+
         let options: Vec<SelectOption> = self
             .config
             .model_options()
@@ -195,27 +346,68 @@ impl XPlugin for AiPlugin {
                         return Ok(UiResponse::UpdateView(self.render()));
                     }
 
-                    self.messages.push(ChatMessage {
+                    let session = self.active_mut();
+                    session.messages.push(ChatMessage {
                         role: ChatRole::User,
                         content: text,
                     });
+                    Self::trim_history(&mut session.messages);
+                    Self::ensure_session_title(session);
                     self.draft.clear();
-                    Self::trim_history(&mut self.messages);
                     self.pending = true;
                     self.status = "正在请求 AI…".to_string();
                     self.persist();
                     Ok(UiResponse::UpdateView(self.render()))
                 }
+                // 新建会话：创建并切换到空会话
+                "btn_new_session" => {
+                    let session = Self::fresh_session();
+                    self.active_session_id = session.id.clone();
+                    self.sessions.push(session);
+                    // 超限时淘汰最旧的会话（不淘汰当前）
+                    while self.sessions.len() > MAX_SESSIONS {
+                        let oldest = self
+                            .sessions
+                            .iter()
+                            .map(|s| s.id.clone())
+                            .find(|id| *id != self.active_session_id);
+                        match oldest {
+                            Some(id) => self.sessions.retain(|s| s.id != id),
+                            None => break,
+                        }
+                    }
+                    self.pending = false;
+                    self.error = None;
+                    self.status = "AI 就绪：已开始新会话".to_string();
+                    self.persist();
+                    Ok(UiResponse::UpdateView(self.render()))
+                }
+                // 删除当前会话；仅剩一个时清空重置
                 "btn_clear" => {
-                    self.messages.clear();
+                    let was_last = self.sessions.len() == 1;
+                    if was_last {
+                        let fresh = Self::fresh_session();
+                        self.active_session_id = fresh.id.clone();
+                        self.sessions = vec![fresh];
+                        self.status = "AI 就绪：已开始新会话".to_string();
+                    } else {
+                        let removed = self.active_session_id.clone();
+                        self.sessions.retain(|s| s.id != removed);
+                        self.active_session_id = self.sessions[0].id.clone();
+                        self.status = format!(
+                            "已删除会话，已切换到「{}」",
+                            self.active().title
+                        );
+                    }
+                    self.pending = false;
                     self.draft.clear();
                     self.error = None;
-                    self.status = "AI 就绪：已开始新对话".to_string();
                     self.persist();
                     Ok(UiResponse::UpdateView(self.render()))
                 }
                 "btn_copy" => {
                     let last_answer = self
+                        .active()
                         .messages
                         .iter()
                         .rev()
@@ -247,6 +439,14 @@ impl XPlugin for AiPlugin {
                 }
                 _ => Ok(UiResponse::NoChange),
             },
+            UiEvent::SelectChanged { id, index, .. } if id == "select_session" => {
+                self.select_session_by_index(index as usize);
+                self.pending = false;
+                self.error = None;
+                self.status = format!("已切换会话：{}", self.active().title);
+                self.persist();
+                Ok(UiResponse::UpdateView(self.render()))
+            }
             UiEvent::SelectChanged { id, index, .. } if id == "select_model" => {
                 self.config.select_by_index(index as usize);
                 if let Ok(bytes) = serde_json::to_vec(&self.config) {
@@ -266,8 +466,8 @@ impl XPlugin for AiPlugin {
             // 宿主后台请求完成：追加回答 / 失败回滚 / 中止保留部分内容
             UiEvent::AssistantDone { content, error, aborted } => {
                 self.pending = false;
-                // 过期保护：当前对话必须以用户消息结尾（请求期间被清空等场景直接丢弃）
-                if self.messages.last().map(|m| m.role) != Some(ChatRole::User) {
+                // 过期保护：当前会话必须以用户消息结尾（请求期间切换/清空会话等场景直接丢弃）
+                if self.active().messages.last().map(|m| m.role) != Some(ChatRole::User) {
                     return Ok(UiResponse::UpdateView(self.render()));
                 }
                 let text = content.trim().to_string();
@@ -285,7 +485,8 @@ impl XPlugin for AiPlugin {
                         });
                     }
                     None => {
-                        self.messages.push(ChatMessage {
+                        let session = self.active_mut();
+                        session.messages.push(ChatMessage {
                             role: ChatRole::Assistant,
                             content: text,
                         });
@@ -318,28 +519,41 @@ mod tests {
         assert!(matches!(view.root, UiNode::Container { .. }));
         // 原生测试环境下剪贴板与存储均为空，不应自动填入内容
         assert!(plugin.draft.is_empty());
-        assert!(plugin.messages.is_empty());
+        // 初始只有一个空会话
+        assert_eq!(plugin.sessions.len(), 1);
+        assert!(plugin.active().messages.is_empty());
         assert!(plugin.status.contains("剪贴板为空"));
     }
 
     #[test]
-    fn test_persisted_chat_roundtrip() {
-        let chat = PersistedChat {
+    fn test_persisted_sessions_roundtrip_and_legacy_migration() {
+        // 新格式回环
+        let saved = PersistedSessions {
+            sessions: vec![ChatSession {
+                id: "s1".into(),
+                title: "会话一".into(),
+                messages: vec![ChatMessage {
+                    role: ChatRole::User,
+                    content: "你好".to_string(),
+                }],
+            }],
+            active_id: "s1".into(),
+        };
+        let bytes = serde_json::to_vec(&saved).unwrap();
+        let loaded: PersistedSessions = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(loaded.sessions.len(), 1);
+        assert_eq!(loaded.active_id, "s1");
+
+        // 旧版 history.json（单会话）可反序列化，供迁移读取
+        let old_bytes = serde_json::to_vec(&PersistedChat {
             messages: vec![ChatMessage {
                 role: ChatRole::User,
-                content: "你好".to_string(),
+                content: "旧对话".to_string(),
             }],
-            draft: "未发送的问题".to_string(),
-        };
-        let bytes = serde_json::to_vec(&chat).unwrap();
-        let loaded: PersistedChat = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(loaded.messages.len(), 1);
-        assert_eq!(loaded.draft, "未发送的问题");
-
-        // 空存储 / 空对象都能安全回退
-        let empty: PersistedChat = serde_json::from_slice(b"{}").unwrap();
-        assert!(empty.messages.is_empty());
-        assert!(empty.draft.is_empty());
+        })
+        .unwrap();
+        let old: PersistedChat = serde_json::from_slice(&old_bytes).unwrap();
+        assert_eq!(old.messages.len(), 1);
     }
 
     #[test]
@@ -377,7 +591,7 @@ mod tests {
         plugin.handle_event(UiEvent::Click { id: "btn_send".to_string() }).unwrap();
         let err = plugin.error.as_deref().unwrap();
         assert!(err.contains("托盘") && err.contains("设置"));
-        assert!(plugin.messages.is_empty());
+        assert!(plugin.active().messages.is_empty());
     }
 
     #[test]
@@ -390,7 +604,7 @@ mod tests {
         assert!(plugin.error.as_deref().unwrap().contains("托盘"));
         // 发送被拦截，草稿保留
         assert_eq!(plugin.draft, "你好");
-        assert!(plugin.messages.is_empty());
+        assert!(plugin.active().messages.is_empty());
     }
 
     fn configured_plugin() -> AiPlugin {
@@ -415,8 +629,10 @@ mod tests {
             .unwrap();
         assert!(matches!(resp, UiResponse::UpdateView(_)));
         // 用户消息立即入列，草稿清空，进入等待状态，不产生错误
-        assert_eq!(plugin.messages.len(), 1);
-        assert_eq!(plugin.messages[0].content, "你好");
+        assert_eq!(plugin.active().messages.len(), 1);
+        assert_eq!(plugin.active().messages[0].content, "你好");
+        // 首条用户消息自动命名为会话标题
+        assert_eq!(plugin.active().title, "你好");
         assert!(plugin.draft.is_empty());
         assert!(plugin.pending);
         assert!(plugin.error.is_none());
@@ -434,8 +650,8 @@ mod tests {
                 aborted: false,
             })
             .unwrap();
-        assert_eq!(plugin.messages.len(), 2);
-        assert_eq!(plugin.messages[1].content, "答案");
+        assert_eq!(plugin.active().messages.len(), 2);
+        assert_eq!(plugin.active().messages[1].content, "答案");
         assert!(!plugin.pending);
         assert!(plugin.status.contains("已回答"));
         assert!(plugin.error.is_none());
@@ -453,7 +669,7 @@ mod tests {
                 aborted: false,
             })
             .unwrap();
-        assert!(plugin.messages.is_empty());
+        assert!(plugin.active().messages.is_empty());
         assert_eq!(plugin.draft, "你好");
         assert!(plugin.error.as_deref().unwrap().contains("401"));
         assert!(!plugin.pending);
@@ -471,8 +687,8 @@ mod tests {
                 aborted: true,
             })
             .unwrap();
-        assert_eq!(plugin.messages.len(), 2);
-        assert_eq!(plugin.messages[1].content, "春天来了");
+        assert_eq!(plugin.active().messages.len(), 2);
+        assert_eq!(plugin.active().messages[1].content, "春天来了");
         assert!(plugin.status.contains("停止"));
     }
 
@@ -490,9 +706,63 @@ mod tests {
                 aborted: false,
             })
             .unwrap();
-        assert!(plugin.messages.is_empty());
+        assert!(plugin.active().messages.is_empty());
         assert!(!plugin.pending);
         assert!(plugin.error.is_none());
+    }
+
+    #[test]
+    fn test_session_lifecycle_create_switch_delete() {
+        let mut plugin = configured_plugin();
+        // 新建会话
+        plugin.handle_event(UiEvent::Click { id: "btn_new_session".into() }).unwrap();
+        assert_eq!(plugin.sessions.len(), 2);
+        assert!(plugin.active().messages.is_empty());
+        assert_eq!(plugin.active().title, "新会话");
+
+        // 在新会话发送，首条消息自动命名
+        plugin.draft = "帮我写排序".into();
+        plugin.handle_event(UiEvent::Click { id: "btn_send".into() }).unwrap();
+        assert_eq!(plugin.active().title, "帮我写排序");
+        plugin
+            .handle_event(UiEvent::AssistantDone {
+                content: "好的".into(),
+                error: None,
+                aborted: false,
+            })
+            .unwrap();
+        assert_eq!(plugin.active().messages.len(), 2);
+
+        // 切回第一个（空）会话
+        plugin
+            .handle_event(UiEvent::SelectChanged {
+                id: "select_session".into(),
+                index: 0,
+                value: "0".into(),
+            })
+            .unwrap();
+        assert!(plugin.active().messages.is_empty());
+
+        // 再切回来，消息还在
+        plugin
+            .handle_event(UiEvent::SelectChanged {
+                id: "select_session".into(),
+                index: 1,
+                value: "1".into(),
+            })
+            .unwrap();
+        assert_eq!(plugin.active().messages.len(), 2);
+
+        // 删除当前会话（还有另一个），自动切换到剩余会话
+        plugin.handle_event(UiEvent::Click { id: "btn_clear".into() }).unwrap();
+        assert_eq!(plugin.sessions.len(), 1);
+        assert!(plugin.active().messages.is_empty());
+
+        // 删除最后一个会话 → 重置为全新空会话（始终保留一个）
+        plugin.handle_event(UiEvent::Click { id: "btn_clear".into() }).unwrap();
+        assert_eq!(plugin.sessions.len(), 1);
+        assert!(plugin.active().messages.is_empty());
+        assert_eq!(plugin.active().title, "新会话");
     }
 
     #[test]
@@ -555,7 +825,7 @@ mod tests {
         let resp = plugin.handle_event(UiEvent::Click { id: "btn_copy".to_string() }).unwrap();
         assert!(matches!(resp, UiResponse::ShowToast(t) if t.level == ToastLevel::Warning));
 
-        plugin.messages = vec![
+        plugin.active_mut().messages = vec![
             ChatMessage {
                 role: ChatRole::User,
                 content: "你好".to_string(),
@@ -571,8 +841,8 @@ mod tests {
         assert!(matches!(resp, UiResponse::ShowToast(t) if t.level == ToastLevel::Success));
 
         plugin.handle_event(UiEvent::Click { id: "btn_clear".to_string() }).unwrap();
-        assert!(plugin.messages.is_empty());
+        assert!(plugin.active().messages.is_empty());
         assert!(plugin.draft.is_empty());
-        assert!(plugin.status.contains("新对话"));
+        assert!(plugin.status.contains("新会话"));
     }
 }
