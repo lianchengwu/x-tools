@@ -21,10 +21,10 @@ use windows_sys::Win32::UI::HiDpi::{
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA,
-    GetCursorPos, GetMessageW, GetWindowLongPtrW, HTCLIENT, HTTRANSPARENT, HWND_TOPMOST,
-    KillTimer, MSG, PostQuitMessage, RegisterClassExW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
-    SWP_NOSIZE, SWP_NOZORDER, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    SystemParametersInfoW, SPI_GETWORKAREA, SM_CXSCREEN, SM_CYSCREEN, ULW_ALPHA,
+    GetCursorPos, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, HTCLIENT, HTTRANSPARENT,
+    HWND_TOPMOST, KillTimer, MSG, PostQuitMessage, RegisterClassExW, SW_HIDE, SW_SHOW,
+    SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SetTimer, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, SystemParametersInfoW, SPI_GETWORKAREA, SM_CXSCREEN, SM_CYSCREEN, ULW_ALPHA,
     UpdateLayeredWindow, WM_COMMAND, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
     WM_NCHITTEST, WM_RBUTTONUP, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
     WS_EX_TOPMOST, WS_POPUP,
@@ -214,13 +214,13 @@ impl HostWindow {
 
         if discovered.is_empty() {
             let fallback = [
-                ("xtools.time", "时间戳转换", "clock"),
-                ("xtools.json", "JSON 格式化", "{}"),
-                ("xtools.trans", "划词翻译", "文"),
+                ("time", "xtools.time", "时间戳转换", "clock"),
+                ("json", "xtools.json", "JSON 格式化", "{}"),
+                ("trans", "xtools.trans", "划词翻译", "文"),
             ];
-            for (id, name, mark) in fallback {
+            for (short, id, name, mark) in fallback {
                 discovered.push(DiscoveredPlugin {
-                    path: PathBuf::from(format!("{}.wasm", id.trim_prefix("xtools."))),
+                    path: PathBuf::from(format!("{short}.wasm")),
                     manifest: PluginManifest {
                         id: id.into(),
                         name: name.into(),
