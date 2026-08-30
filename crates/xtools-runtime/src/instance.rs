@@ -24,11 +24,9 @@ impl PluginInstance {
         register_host_functions(&mut linker)?;
 
         let temp_id = "loading".to_string();
-        let storage_dir = storage_root
-            .unwrap_or_else(|| std::env::temp_dir().join("xtools-storage"))
-            .join(&temp_id);
+        let storage_root = storage_root.unwrap_or_else(|| std::env::temp_dir().join("xtools-storage"));
 
-        let mut store = Store::new(engine, HostContext::new(temp_id, storage_dir.clone()));
+        let mut store = Store::new(engine, HostContext::new(temp_id, storage_root.clone()));
         let instance = linker.instantiate(&mut store, &module)?;
 
         // Read manifest
@@ -41,13 +39,7 @@ impl PluginInstance {
         let (ptr, len) = unpack_ptr_len(packed);
         let manifest: PluginManifest = Self::read_and_dealloc(&mut store, &instance, ptr, len)?;
 
-        // Re-target storage dir to actual plugin ID
-        let real_storage_dir = storage_dir
-            .parent()
-            .unwrap_or(&storage_dir)
-            .join(&manifest.id);
         store.data_mut().plugin_id = manifest.id.clone();
-        store.data_mut().storage_dir = real_storage_dir;
 
         Ok(Self {
             store,

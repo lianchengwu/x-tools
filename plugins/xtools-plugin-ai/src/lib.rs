@@ -11,7 +11,6 @@ const MAX_HISTORY: usize = 100;
 /// 会话总数上限，超出时淘汰最旧的会话
 const MAX_SESSIONS: usize = 20;
 const SESSIONS_KEY: &str = "sessions.json";
-const LEGACY_HISTORY_KEY: &str = "history.json";
 
 /// 一个会话：标题 + 消息列表
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,13 +42,6 @@ struct PersistedSessions {
     sessions: Vec<ChatSession>,
     #[serde(default)]
     active_id: String,
-}
-
-/// 旧版单会话快照（history.json），仅用于迁移
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct PersistedChat {
-    #[serde(default)]
-    messages: Vec<ChatMessage>,
 }
 
 impl AiPlugin {
@@ -138,38 +130,13 @@ impl AiPlugin {
         }
     }
 
-    /// 读取会话；旧版 history.json 自动迁移为第一个会话
+    /// 读取全部会话
     fn load_persisted() -> PersistedSessions {
-        if let Some(bytes) = host::storage_get(SESSIONS_KEY).ok().flatten() {
-            if let Ok(saved) = serde_json::from_slice::<PersistedSessions>(&bytes) {
-                if !saved.sessions.is_empty() {
-                    return saved;
-                }
-            }
-        }
-        // 迁移：旧版单会话
-        if let Some(bytes) = host::storage_get(LEGACY_HISTORY_KEY).ok().flatten() {
-            if let Ok(old) = serde_json::from_slice::<PersistedChat>(&bytes) {
-                if !old.messages.is_empty() {
-                    let title = old
-                        .messages
-                        .iter()
-                        .find(|m| m.role == ChatRole::User)
-                        .map(|m| m.content.chars().take(16).collect())
-                        .unwrap_or_else(|| "历史对话".to_string());
-                    let id = Self::new_session_id();
-                    return PersistedSessions {
-                        sessions: vec![ChatSession {
-                            id: id.clone(),
-                            title,
-                            messages: old.messages,
-                        }],
-                        active_id: id,
-                    };
-                }
-            }
-        }
-        PersistedSessions::default()
+        host::storage_get(SESSIONS_KEY)
+            .ok()
+            .flatten()
+            .and_then(|bytes| serde_json::from_slice::<PersistedSessions>(&bytes).ok())
+            .unwrap_or_default()
     }
 
     /// 历史超限时从最旧开始裁剪
@@ -526,8 +493,7 @@ mod tests {
     }
 
     #[test]
-    fn test_persisted_sessions_roundtrip_and_legacy_migration() {
-        // 新格式回环
+    fn test_persisted_sessions_roundtrip() {
         let saved = PersistedSessions {
             sessions: vec![ChatSession {
                 id: "s1".into(),
@@ -543,17 +509,6 @@ mod tests {
         let loaded: PersistedSessions = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(loaded.sessions.len(), 1);
         assert_eq!(loaded.active_id, "s1");
-
-        // 旧版 history.json（单会话）可反序列化，供迁移读取
-        let old_bytes = serde_json::to_vec(&PersistedChat {
-            messages: vec![ChatMessage {
-                role: ChatRole::User,
-                content: "旧对话".to_string(),
-            }],
-        })
-        .unwrap();
-        let old: PersistedChat = serde_json::from_slice(&old_bytes).unwrap();
-        assert_eq!(old.messages.len(), 1);
     }
 
     #[test]

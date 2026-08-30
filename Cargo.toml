@@ -22,7 +22,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.85"
@@ -40,6 +40,7 @@ dirs = "6.0"
 jiff = { version = "0.2.35", default-features = false }
 wasmtime = { version = "29.0.0", default-features = false, features = ["runtime", "cranelift", "std"] }
 ureq = { version = "3.4.0", features = ["json"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 arboard = "3.4.1"
 slint = "1.17.1"
 slint-build = "1.17.1"

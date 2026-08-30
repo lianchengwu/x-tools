@@ -196,10 +196,10 @@ fn test_trans_plugin_lifecycle_and_storage() {
     }).expect("Failed to select engine");
     assert!(matches!(select_resp, UiResponse::UpdateView(..)));
 
-    // Verify storage file created by host capability
-    let config_file = temp_dir.join("xtools.trans").join("config.json");
-    assert!(config_file.exists(), "Expected config file to be written by host storage API");
-    let content = std::fs::read_to_string(&config_file).unwrap();
+    // Verify storage persisted via host capability (SQLite)
+    let content = xtools_runtime::storage::read_from(&temp_dir, "xtools.trans", "config.json")
+        .map(|b| String::from_utf8(b).unwrap())
+        .expect("Expected config to be written by host storage API");
     assert!(content.contains("engine_index"), "engine_index should be persisted: {content}");
 
     // 4. Test language swap
@@ -290,16 +290,12 @@ fn load_ai_instance() -> Option<(xtools_runtime::PluginInstance, PathBuf)> {
     Some((PluginLoader::new().with_storage_root(temp_dir.clone()).load_instance(&path).expect("load ai plugin"), temp_dir))
 }
 
-/// 写入多服务商配置（新格式）
+/// 写入多服务商配置（SQLite 键值；temp_dir 即存储根目录）
 fn seed_ai_config(temp_dir: &PathBuf, selected_model: &str) {
-    let cfg_dir = temp_dir.join("xtools.ai");
-    std::fs::create_dir_all(&cfg_dir).unwrap();
-    std::fs::write(
-        cfg_dir.join("config.json"),
-        r#"{"providers":[{"id":"p1","name":"Stub","base_url":"http://127.0.0.1:9/v1","api_key":"sk-stub","models":["m1","m2"]}],"selected_provider_id":"p1","selected_model":"MODEL"}"#
-            .replace("MODEL", selected_model),
-    )
-    .unwrap();
+    let json = r#"{"providers":[{"id":"p1","name":"Stub","base_url":"http://127.0.0.1:9/v1","api_key":"sk-stub","models":["m1","m2"]}],"selected_provider_id":"p1","selected_model":"MODEL"}"#
+        .replace("MODEL", selected_model);
+    xtools_runtime::storage::write_to(temp_dir, "xtools.ai", "config.json", json.as_bytes())
+        .unwrap();
 }
 
 #[test]
@@ -346,8 +342,10 @@ fn test_ai_send_phase_a_and_assistant_done_success() {
     assert_eq!(msgs[1].0, 1);
     assert_eq!(msgs[1].1, "这是回答");
 
-    // 会话已持久化（供下次打开恢复）
-    let sessions = std::fs::read_to_string(temp_dir.join("xtools.ai").join("sessions.json")).unwrap();
+    // 会话已持久化到 SQLite（供下次打开恢复）
+    let sessions = xtools_runtime::storage::read_from(&temp_dir, "xtools.ai", "sessions.json")
+        .expect("sessions should be persisted");
+    let sessions = String::from_utf8(sessions).unwrap();
     assert!(sessions.contains("这是回答"), "{sessions}");
 
     let _ = std::fs::remove_dir_all(&temp_dir);

@@ -11,6 +11,7 @@ use xtools_protocol::ChatRole;
 
 use crate::ai_config::plugins_root;
 use crate::ai_config::AiConfigFile;
+use xtools_runtime::storage;
 
 /// 全局超时覆盖整个请求-响应（含流式读取）周期
 const STREAM_TIMEOUT_SECS: u64 = 300;
@@ -45,13 +46,15 @@ pub fn chat_url(base_url: &str) -> String {
     }
 }
 
-/// 从插件存储目录读取当前配置与对话历史，组装请求参数。
+/// 从插件存储（SQLite）读取当前配置与「当前激活会话」的对话历史，组装请求参数。
 /// 必须在插件完成「阶段 A」（用户消息入列并持久化）之后调用。
 pub fn load_chat_context(plugin_id: &str) -> Result<AiChatParams, String> {
-    let dir = plugins_root().join(plugin_id);
+    load_chat_context_from(&plugins_root(), plugin_id)
+}
 
-    let config_bytes = std::fs::read(dir.join("config.json"))
-        .map_err(|e| format!("读取 AI 配置失败: {e}"))?;
+pub fn load_chat_context_from(root: &std::path::Path, plugin_id: &str) -> Result<AiChatParams, String> {
+    let config_bytes = storage::read_from(root, plugin_id, "config.json")
+        .ok_or("尚未找到 AI 配置，请到「设置」中添加服务商")?;
     let mut config: AiConfigFile =
         serde_json::from_slice(&config_bytes).map_err(|e| format!("解析 AI 配置失败: {e}"))?;
     config.normalize();
@@ -65,19 +68,48 @@ pub fn load_chat_context(plugin_id: &str) -> Result<AiChatParams, String> {
         return Err("AI 服务商配置不完整（接口地址 / API Key / 模型）".to_string());
     }
 
+    let messages = read_active_session_messages(root, plugin_id);
+
+    Ok(AiChatParams {
+        base_url: provider.base_url.clone(),
+        api_key: provider.api_key.clone(),
+        model: config.selected_model.clone(),
+        messages,
+    })
+}
+
+/// 读取当前激活会话的消息列表（与插件写入的 sessions.json 结构一致）
+fn read_active_session_messages(root: &std::path::Path, plugin_id: &str) -> Vec<(String, String)> {
     #[derive(serde::Deserialize)]
-    struct PersistedHistory {
+    struct PersistedSession {
+        #[serde(default)]
+        id: String,
         #[serde(default)]
         messages: Vec<ChatMessage>,
     }
-    let history_bytes = std::fs::read(dir.join("history.json")).unwrap_or_default();
-    let history: PersistedHistory =
-        serde_json::from_slice(&history_bytes).unwrap_or(PersistedHistory {
-            messages: Vec::new(),
-        });
+    #[derive(serde::Deserialize)]
+    struct PersistedSessions {
+        #[serde(default)]
+        sessions: Vec<PersistedSession>,
+        #[serde(default)]
+        active_id: String,
+    }
 
-    let messages = history
-        .messages
+    let Some(bytes) = storage::read_from(root, plugin_id, "sessions.json") else {
+        return Vec::new();
+    };
+    let Ok(file) = serde_json::from_slice::<PersistedSessions>(&bytes) else {
+        return Vec::new();
+    };
+    let messages = file
+        .sessions
+        .iter()
+        .find(|s| s.id == file.active_id)
+        .or_else(|| file.sessions.first())
+        .map(|s| s.messages.clone())
+        .unwrap_or_default();
+
+    messages
         .into_iter()
         .map(|m| {
             (
@@ -88,14 +120,7 @@ pub fn load_chat_context(plugin_id: &str) -> Result<AiChatParams, String> {
                 m.content,
             )
         })
-        .collect();
-
-    Ok(AiChatParams {
-        base_url: provider.base_url.clone(),
-        api_key: provider.api_key.clone(),
-        model: config.selected_model.clone(),
-        messages,
-    })
+        .collect()
 }
 
 /// 执行流式对话请求（阻塞，应在后台线程调用）。
@@ -315,6 +340,42 @@ mod tests {
             model: "test-model".into(),
             messages: vec![("user".into(), "你好".into())],
         }
+    }
+
+    #[test]
+    fn test_load_chat_context_reads_active_session_from_db() {
+        let root = std::env::temp_dir().join(format!(
+            "xtools-ai-ctx-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let ai = "xtools.ai";
+
+        // 配置（与插件共享同一 SQLite 键值）
+        storage::write_to(
+            &root,
+            ai,
+            "config.json",
+            r#"{"providers":[{"id":"p1","name":"Stub","base_url":"http://127.0.0.1:9/v1","api_key":"sk-stub","models":["m1","m2"]}],"selected_provider_id":"p1","selected_model":"m2"}"#
+                .as_bytes(),
+        )
+        .unwrap();
+
+        // 两个会话，激活的是第二个 —— 请求必须携带它的消息，而不是另一个会话的
+        let sessions_json = r#"{"sessions":[
+                {"id":"s1","title":"旧会话","messages":[{"role":"User","content":"上一条会话的问题"}]},
+                {"id":"s2","title":"当前","messages":[{"role":"User","content":"你好"},{"role":"Assistant","content":"你好！"},{"role":"User","content":"刚输入的问题"}]}
+            ],"active_id":"s2"}"#;
+        storage::write_to(&root, ai, "sessions.json", sessions_json.as_bytes()).unwrap();
+
+        let ctx = load_chat_context_from(&root, ai).expect("load context");
+        assert_eq!(ctx.model, "m2");
+        assert_eq!(ctx.api_key, "sk-stub");
+        // 请求消息 = 激活会话「s2」的完整历史（以刚输入的用户消息结尾）
+        assert_eq!(ctx.messages.len(), 3, "{:?}", ctx.messages);
+        assert_eq!(ctx.messages[2], ("user".to_string(), "刚输入的问题".to_string()));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

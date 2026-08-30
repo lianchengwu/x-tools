@@ -363,36 +363,10 @@ pub fn run_settings() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_config::TransConfigFile;
 
     #[test]
-    fn test_config_file_roundtrip() {
-        let dir = std::env::temp_dir().join(format!("xtools-settings-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-
-        // 百度：保存时保留已有 engine_index
-        let baidu_path = dir.join("trans.json");
-        crate::ai_config::save_json_test_helper(
-            &baidu_path,
-            &TransConfigFile {
-                engine_index: 1,
-                baidu_appid: String::new(),
-                baidu_key: String::new(),
-            },
-        )
-        .unwrap();
-        let mut baidu: TransConfigFile = crate::ai_config::load_json_test_helper(&baidu_path);
-        baidu.baidu_appid = "appid-1".into();
-        baidu.baidu_key = "key-1".into();
-        crate::ai_config::save_json_test_helper(&baidu_path, &baidu).unwrap();
-        let reloaded: TransConfigFile = crate::ai_config::load_json_test_helper(&baidu_path);
-        assert_eq!(reloaded.engine_index, 1);
-        assert_eq!(reloaded.baidu_appid, "appid-1");
-        assert_eq!(reloaded.baidu_key, "key-1");
-
-        // AI：多服务商写读回环，序列化不包含旧字段
-        let ai_path = dir.join("ai.json");
+    fn test_config_blob_roundtrip() {
+        // AI：多服务商序列化/反序列化回环（实际读写经 SQLite，见 xtools-runtime::storage 测试）
         let mut config = AiConfigFile::default();
         config.providers.push(AiProviderEntry {
             id: "p1".into(),
@@ -403,19 +377,17 @@ mod tests {
         });
         config.selected_provider_id = "p1".into();
         config.selected_model = "deepseek-chat".into();
-        crate::ai_config::save_json_test_helper(&ai_path, &config).unwrap();
-        let loaded: AiConfigFile = crate::ai_config::load_json_test_helper(&ai_path);
+        let bytes = serde_json::to_vec(&config).unwrap();
+        // 旧版顶层字段 skip_serializing，不再写入
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(!text.contains("\"model\":"), "{text}");
+        let loaded: AiConfigFile = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(loaded.providers.len(), 1);
         assert_eq!(loaded.providers[0].models.len(), 2);
         assert_eq!(loaded.selected_model, "deepseek-chat");
-        let text = std::fs::read_to_string(&ai_path).unwrap();
-        // 旧版顶层字段 skip_serializing，不再写文件（providers 内的 base_url 合法存在）
-        assert!(!text.contains("\"model\":"), "{text}");
         assert_eq!(loaded.base_url, "");
         assert_eq!(loaded.api_key, "");
         assert_eq!(loaded.model, "");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

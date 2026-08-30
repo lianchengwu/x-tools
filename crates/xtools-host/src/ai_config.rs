@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+use xtools_runtime::storage;
 
 /// AI 服务商（OpenAI 兼容接口）：名称 + 地址 + 密钥 + 模型列表
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -117,43 +118,35 @@ impl AiConfigFile {
     }
 }
 
+pub const AI_PLUGIN_ID: &str = "xtools.ai";
+pub const TRANS_PLUGIN_ID: &str = "xtools.trans";
+const CONFIG_KEY: &str = "config.json";
+
 pub fn plugins_root() -> PathBuf {
     dirs::config_dir()
         .map(|p| p.join("xtools").join("plugins"))
-        .unwrap_or_else(|| PathBuf::from("storage"))
+        .unwrap_or_else(|| std::path::PathBuf::from("storage"))
 }
 
-pub fn baidu_config_path() -> PathBuf {
-    plugins_root().join("xtools.trans").join("config.json")
+/// 从 SQLite 读取一个插件键值（宿主侧统一入口）
+pub fn read_plugin_blob(plugin_id: &str, key: &str) -> Option<Vec<u8>> {
+    storage::read_from(&plugins_root(), plugin_id, key)
 }
 
-pub fn ai_config_path() -> PathBuf {
-    plugins_root().join("xtools.ai").join("config.json")
+/// 写入一个插件键值（宿主侧统一入口）
+pub fn write_plugin_blob(plugin_id: &str, key: &str, value: &[u8]) -> Result<(), String> {
+    storage::write_to(&plugins_root(), plugin_id, key, value)
 }
 
-fn load_json<T: for<'de> Deserialize<'de> + Default>(path: &PathBuf) -> T {
-    std::fs::read(path)
-        .ok()
+fn load_blob_json<T: for<'de> Deserialize<'de> + Default>(plugin_id: &str) -> T {
+    read_plugin_blob(plugin_id, CONFIG_KEY)
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default()
 }
 
-pub(crate) fn save_json<T: Serialize>(path: &PathBuf, value: &T) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {e}"))?;
-    }
+fn save_blob_json<T: Serialize>(plugin_id: &str, value: &T) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(value).map_err(|e| format!("序列化配置失败: {e}"))?;
-    std::fs::write(path, bytes).map_err(|e| format!("写入配置失败: {e}"))
-}
-
-#[cfg(test)]
-pub(crate) fn load_json_test_helper<T: for<'de> Deserialize<'de> + Default>(path: &PathBuf) -> T {
-    load_json(path)
-}
-
-#[cfg(test)]
-pub(crate) fn save_json_test_helper<T: Serialize>(path: &PathBuf, value: &T) -> Result<(), String> {
-    save_json(path, value)
+    write_plugin_blob(plugin_id, CONFIG_KEY, &bytes)
 }
 
 /// 智能翻译插件存储（宿主设置窗口使用）
@@ -169,27 +162,27 @@ pub struct TransConfigFile {
 
 /// 读取百度翻译配置（engine_index 保留插件内的选择）
 pub fn load_baidu_config() -> TransConfigFile {
-    load_json(&baidu_config_path())
+    load_blob_json(TRANS_PLUGIN_ID)
 }
 
 /// 保存百度翻译 AppID / 密钥，保留现有引擎选择
 pub fn save_baidu_config(appid: &str, key: &str) -> Result<(), String> {
-    let mut config: TransConfigFile = load_json(&baidu_config_path());
+    let mut config: TransConfigFile = load_blob_json(TRANS_PLUGIN_ID);
     config.baidu_appid = appid.trim().to_string();
     config.baidu_key = key.trim().to_string();
-    save_json(&baidu_config_path(), &config)
+    save_blob_json(TRANS_PLUGIN_ID, &config)
 }
 
 /// 读取 AI 多服务商配置（含旧格式迁移）
 pub fn load_ai_config() -> AiConfigFile {
-    let mut config: AiConfigFile = load_json(&ai_config_path());
+    let mut config: AiConfigFile = load_blob_json(AI_PLUGIN_ID);
     config.normalize();
     config
 }
 
 /// 保存 AI 多服务商配置
 pub fn save_ai_config(config: &AiConfigFile) -> Result<(), String> {
-    save_json(&ai_config_path(), config)
+    save_blob_json(AI_PLUGIN_ID, config)
 }
 
 #[cfg(test)]

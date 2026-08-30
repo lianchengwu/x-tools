@@ -12,7 +12,8 @@ use crate::error::RuntimeError;
 /// Host runtime context passed into the Wasmtime Store for each plugin instance.
 pub struct HostContext {
     pub plugin_id: String,
-    pub storage_dir: PathBuf,
+    /// 插件键值存储的根目录（SQLite 库位于其下 storage.db）
+    pub storage_root: PathBuf,
     pub clipboard: Arc<Mutex<Option<Clipboard>>>,
     pub http_client: ureq::Agent,
 }
@@ -31,7 +32,7 @@ fn build_http_agent(global_timeout: std::time::Duration) -> ureq::Agent {
 }
 
 impl HostContext {
-    pub fn new(plugin_id: String, storage_dir: PathBuf) -> Self {
+    pub fn new(plugin_id: String, storage_root: PathBuf) -> Self {
         let clipboard = match Clipboard::new() {
             Ok(cb) => Arc::new(Mutex::new(Some(cb))),
             Err(e) => {
@@ -44,7 +45,7 @@ impl HostContext {
 
         Self {
             plugin_id,
-            storage_dir,
+            storage_root,
             clipboard,
             http_client,
         }
@@ -312,12 +313,9 @@ pub fn register_host_functions(linker: &mut Linker<HostContext>) -> Result<(), R
                 Err(_) => return -2,
             };
 
-            let file_path = caller.data().storage_dir.join(&key);
-            let bytes = if file_path.exists() {
-                std::fs::read(&file_path).unwrap_or_default()
-            } else {
-                Vec::new()
-            };
+            let root = caller.data().storage_root.clone();
+            let bytes = crate::storage::read_from(&root, &caller.data().plugin_id, &key)
+                .unwrap_or_default();
 
             if bytes.is_empty() {
                 let _ = memory.write(&mut caller, out_ptr_ptr as usize, &0u32.to_le_bytes());
@@ -368,15 +366,10 @@ pub fn register_host_functions(linker: &mut Linker<HostContext>) -> Result<(), R
                 Err(_) => return -2,
             };
 
-            let storage_dir = caller.data().storage_dir.clone();
-            if let Err(e) = std::fs::create_dir_all(&storage_dir) {
-                log::error!("Failed to create storage dir {storage_dir:?}: {e}");
-                return -3;
-            }
-
-            let file_path = storage_dir.join(&key);
-            if let Err(e) = std::fs::write(&file_path, &val_buf) {
-                log::error!("Failed to write storage file {file_path:?}: {e}");
+            let root = caller.data().storage_root.clone();
+            let plugin_id = caller.data().plugin_id.clone();
+            if let Err(e) = crate::storage::write_to(&root, &plugin_id, &key, &val_buf) {
+                log::error!("Failed to write storage {plugin_id}/{key}: {e}");
                 return -4;
             }
 
