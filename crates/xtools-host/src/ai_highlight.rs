@@ -99,7 +99,12 @@ fn is_keyword(word: &str) -> bool {
 
 /// 对单行代码分词。`state` 携带跨行的块注释状态。
 /// 返回 (text, kind) 列表，kind 见 TOKEN_* 常量。
+///
+/// Tab 会在渲染时显示为缺字形的方框（Slint 文本没有制表位），
+/// Go 等语言惯用 Tab 缩进，这里统一展开为 4 个空格；顺带去掉 CRLF 残留的 \r。
 pub fn tokenize_line(line: &str, lang: &str, state: &mut ScanState) -> Vec<(String, i32)> {
+    let expanded = line.replace('\t', "    ");
+    let line = expanded.trim_end_matches('\r');
     let mut tokens: Vec<(String, i32)> = Vec::new();
     let mut push = |tokens: &mut Vec<(String, i32)>, text: String, kind: i32| {
         if text.is_empty() {
@@ -294,6 +299,23 @@ mod tests {
         let mut state = ScanState::default();
         let tokens = tokenize_line("let n = 42;", "rust", &mut state);
         assert!(tokens.iter().any(|t| t.0 == "42" && t.1 == TOKEN_NUMBER), "{tokens:?}");
+    }
+
+    #[test]
+    fn test_tokenize_expands_tabs_and_strips_cr() {
+        let mut state = ScanState::default();
+        let tokens = tokenize_line("\tfn main() {\r", "go", &mut state);
+        let joined: String = tokens.iter().map(|t| t.0.clone()).collect();
+        // Tab 展开为 4 空格、\r 被去掉，不含任何控制字符
+        assert_eq!(joined, "    fn main() {");
+        assert!(!joined.contains('\t') && !joined.contains('\r'));
+
+        // 纯 Tab 行（连续缩进）
+        let mut state = ScanState::default();
+        let tokens = tokenize_line("\t\treturn nil", "go", &mut state);
+        let joined: String = tokens.iter().map(|t| t.0.clone()).collect();
+        assert_eq!(joined, "        return nil");
+        assert!(tokens.iter().any(|t| t.0 == "return" && t.1 == TOKEN_KEYWORD));
     }
 
     #[test]

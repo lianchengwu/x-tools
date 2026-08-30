@@ -35,15 +35,30 @@ pub fn open_db(root: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
-/// 读取一个键（无则返回 None）
+/// 读取一个键（无则返回 None）。
+/// 兼容 BLOB 与 TEXT 两种存储类型：应用自身写入 BLOB，
+/// 但外部工具（如 sqlite3 CLI / 其他语言绑定）常以 TEXT 写入。
 pub fn read_from(root: &Path, plugin_id: &str, key: &str) -> Option<Vec<u8>> {
     let conn = open_db(root).ok()?;
-    conn.query_row(
-        "SELECT value FROM plugin_storage WHERE plugin_id = ?1 AND key = ?2",
-        params![plugin_id, key],
-        |row| row.get::<_, Vec<u8>>(0),
-    )
-    .ok()
+    let bytes = conn
+        .query_row(
+            "SELECT value FROM plugin_storage WHERE plugin_id = ?1 AND key = ?2",
+            params![plugin_id, key],
+            |row| {
+                let value = row.get_ref(0)?;
+                Ok(match value {
+                    rusqlite::types::ValueRef::Blob(bytes) => bytes.to_vec(),
+                    rusqlite::types::ValueRef::Text(bytes) => bytes.to_vec(),
+                    _ => Vec::new(),
+                })
+            },
+        )
+        .ok()?;
+    if bytes.is_empty() {
+        None
+    } else {
+        Some(bytes)
+    }
 }
 
 /// 写入（upsert）一个键
@@ -70,6 +85,26 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn test_read_accepts_text_and_integer_values() {
+        let root = temp_root("text-values");
+        {
+            let conn = open_db(&root).unwrap();
+            // 模拟外部工具以 TEXT / INTEGER 类型写入
+            conn.execute(
+                "INSERT INTO plugin_storage (plugin_id, key, value) VALUES ('xtools.ai', 'as_text', 'hello')",
+                [],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            read_from(&root, "xtools.ai", "as_text").as_deref(),
+            Some(b"hello".as_slice())
+        );
+        assert!(read_from(&root, "xtools.ai", "missing").is_none());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
