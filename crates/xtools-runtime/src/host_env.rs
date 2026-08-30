@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,6 +17,9 @@ pub struct HostContext {
     pub storage_root: PathBuf,
     pub clipboard: Arc<Mutex<Option<Clipboard>>>,
     pub http_client: ureq::Agent,
+    /// manifest 声明的权限集合。manifest 从插件读取完成后由 `set_permissions`
+    /// 注入；宿主能力入口（剪贴板 / HTTP / 存储）据此执行权限守卫。
+    pub permissions: HashSet<Permission>,
 }
 
 /// 构建宿主 HTTP 客户端。
@@ -48,8 +52,57 @@ impl HostContext {
             storage_root,
             clipboard,
             http_client,
+            permissions: HashSet::new(),
         }
     }
+
+    /// 读取 manifest 后注入插件声明的权限（manifest 是权限的唯一来源）
+    pub fn set_permissions(&mut self, permissions: Vec<Permission>) {
+        self.permissions = permissions.into_iter().collect();
+    }
+
+    /// HTTP 权限是否覆盖该 URL：任一 `Permission::Http` 白名单条目匹配即可
+    pub fn http_allowed(&self, url: &str) -> bool {
+        self.permissions
+            .iter()
+            .any(|p| matches!(p, Permission::Http(domains) if http_whitelist_allows(domains, url)))
+    }
+}
+
+/// 提取 URL 的主机名（小写、去 userinfo 与端口）；无法解析时返回 None。
+fn url_host(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host_port = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    if host_port.starts_with('[') {
+        // IPv6 字面量：[::1]:8080
+        let host = host_port.trim_start_matches('[').split(']').next()?;
+        return Some(host.to_ascii_lowercase());
+    }
+    let host = host_port.split(':').next()?;
+    Some(host.to_ascii_lowercase())
+}
+
+/// manifest 的 Http 白名单是否允许访问该 URL：
+/// `"*"` 放行所有域名；`"*.example.com"` 匹配 example.com 及其子域；其余精确匹配。
+fn http_whitelist_allows(domains: &[String], url: &str) -> bool {
+    let Some(host) = url_host(url) else {
+        return false;
+    };
+    domains.iter().any(|pattern| {
+        let p = pattern.trim().to_ascii_lowercase();
+        if p.is_empty() {
+            return false;
+        }
+        if p == "*" {
+            return true;
+        }
+        if let Some(suffix) = p.strip_prefix("*.") {
+            return host == suffix
+                || host.strip_suffix(suffix).is_some_and(|rest| rest.ends_with('.'));
+        }
+        host == p
+    })
 }
 
 /// Helper function to allocate memory inside WASM and copy host bytes into it.
@@ -106,6 +159,13 @@ pub fn register_host_functions(linker: &mut Linker<HostContext>) -> Result<(), R
         HOST_MODULE,
         HOST_CLIPBOARD_READ,
         |mut caller: Caller<'_, HostContext>, out_ptr_ptr: u32, out_len_ptr: u32| -> i32 {
+            if !caller.data().permissions.contains(&Permission::Clipboard) {
+                log::warn!(
+                    "[plugin:{}] clipboard read denied: Permission::Clipboard not declared",
+                    caller.data().plugin_id
+                );
+                return ERR_PERM_CLIPBOARD;
+            }
             let text = {
                 let mut guard = caller.data().clipboard.lock();
                 guard
@@ -138,6 +198,13 @@ pub fn register_host_functions(linker: &mut Linker<HostContext>) -> Result<(), R
         HOST_MODULE,
         HOST_CLIPBOARD_WRITE,
         |mut caller: Caller<'_, HostContext>, ptr: u32, len: u32| -> i32 {
+            if !caller.data().permissions.contains(&Permission::Clipboard) {
+                log::warn!(
+                    "[plugin:{}] clipboard write denied: Permission::Clipboard not declared",
+                    caller.data().plugin_id
+                );
+                return ERR_PERM_CLIPBOARD;
+            }
             let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                 Some(m) => m,
                 None => return -1,
@@ -191,6 +258,16 @@ pub fn register_host_functions(linker: &mut Linker<HostContext>) -> Result<(), R
                     return -2;
                 }
             };
+
+            // 权限守卫：目标 URL 必须被 manifest 声明的 Http 白名单覆盖
+            if !caller.data().http_allowed(&req.url) {
+                log::warn!(
+                    "[plugin:{}] HTTP request to {} denied: not covered by manifest Permission::Http whitelist",
+                    caller.data().plugin_id,
+                    req.url
+                );
+                return ERR_PERM_HTTP;
+            }
 
             // 插件可通过 HttpRequest.timeout_ms 请求更长的超时（如 LLM 长回答），
             // 未指定时沿用宿主默认的 10s 全局超时。
@@ -298,6 +375,13 @@ pub fn register_host_functions(linker: &mut Linker<HostContext>) -> Result<(), R
          out_ptr_ptr: u32,
          out_len_ptr: u32|
          -> i32 {
+            if !caller.data().permissions.contains(&Permission::Storage) {
+                log::warn!(
+                    "[plugin:{}] storage get denied: Permission::Storage not declared",
+                    caller.data().plugin_id
+                );
+                return ERR_PERM_STORAGE;
+            }
             let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                 Some(m) => m,
                 None => return -1,
@@ -348,6 +432,13 @@ pub fn register_host_functions(linker: &mut Linker<HostContext>) -> Result<(), R
          val_ptr: u32,
          val_len: u32|
          -> i32 {
+            if !caller.data().permissions.contains(&Permission::Storage) {
+                log::warn!(
+                    "[plugin:{}] storage set denied: Permission::Storage not declared",
+                    caller.data().plugin_id
+                );
+                return ERR_PERM_STORAGE;
+            }
             let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                 Some(m) => m,
                 None => return -1,
@@ -390,4 +481,59 @@ pub fn register_host_functions(linker: &mut Linker<HostContext>) -> Result<(), R
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn domains(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn test_url_host_extracts_lowercase_host_without_port_or_userinfo() {
+        assert_eq!(
+            url_host("https://api.example.com/v1/chat"),
+            Some("api.example.com".to_string())
+        );
+        assert_eq!(
+            url_host("http://LocalHost:8080/v1"),
+            Some("localhost".to_string())
+        );
+        assert_eq!(
+            url_host("https://user:pass@api.example.com/x"),
+            Some("api.example.com".to_string())
+        );
+        assert_eq!(url_host("http://[::1]:9000/"), Some("::1".to_string()));
+        assert_eq!(
+            url_host("https://api.example.com"),
+            Some("api.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_http_whitelist_allows() {
+        let wildcard = domains(&["*"]);
+        assert!(http_whitelist_allows(&wildcard, "https://anything.example.net/x"));
+
+        let exact = domains(&["api.example.com"]);
+        assert!(http_whitelist_allows(&exact, "https://api.example.com/v1"));
+        // 端口与大小写不影响匹配
+        assert!(http_whitelist_allows(&exact, "https://API.Example.COM:8443/v1"));
+        assert!(!http_whitelist_allows(&exact, "https://evil.example.com/v1"));
+        // 后缀拼接的伪装域名不匹配
+        assert!(!http_whitelist_allows(
+            &exact,
+            "https://api.example.com.evil.com/v1"
+        ));
+
+        let suffix = domains(&["*.example.com"]);
+        assert!(http_whitelist_allows(&suffix, "https://api.example.com/v1"));
+        assert!(http_whitelist_allows(&suffix, "https://example.com/v1"));
+        assert!(!http_whitelist_allows(&suffix, "https://example.org/v1"));
+
+        // 未声明 Http 权限时一律不放行
+        assert!(!http_whitelist_allows(&[], "https://api.example.com/v1"));
+    }
 }

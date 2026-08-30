@@ -57,7 +57,10 @@ pub fn clipboard_read() -> Result<String, String> {
         let mut out_len: u32 = 0;
         let res = sys::host_clipboard_read(&mut out_ptr, &mut out_len);
         if res < 0 {
-            return Err("Failed to read clipboard".to_string());
+            return Err(match res {
+                ERR_PERM_CLIPBOARD => "剪贴板访问被宿主拒绝：manifest 未声明 Clipboard 权限".to_string(),
+                _ => format!("Failed to read clipboard (code {res})"),
+            });
         }
         if out_ptr.is_null() || out_len == 0 {
             return Ok(String::new());
@@ -80,7 +83,10 @@ pub fn clipboard_write(text: &str) -> Result<(), String> {
     unsafe {
         let res = sys::host_clipboard_write(text.as_ptr(), text.len() as u32);
         if res < 0 {
-            Err("Failed to write clipboard".to_string())
+            Err(match res {
+                ERR_PERM_CLIPBOARD => "剪贴板访问被宿主拒绝：manifest 未声明 Clipboard 权限".to_string(),
+                _ => format!("Failed to write clipboard (code {res})"),
+            })
         } else {
             Ok(())
         }
@@ -106,7 +112,12 @@ pub fn http_request(req: HttpRequest) -> Result<HttpResponse, String> {
             &mut out_len,
         );
         if res < 0 {
-            return Err(format!("Host HTTP request failed with code {res}"));
+            return Err(match res {
+                ERR_PERM_HTTP => {
+                    "HTTP 请求被宿主拒绝：目标地址不在 manifest 的 Http 白名单内".to_string()
+                }
+                _ => format!("Host HTTP request failed with code {res}"),
+            });
         }
         if out_ptr.is_null() || out_len == 0 {
             return Err("Empty response from host".to_string());
@@ -137,7 +148,10 @@ pub fn storage_get(key: &str) -> Result<Option<Vec<u8>>, String> {
             &mut out_len,
         );
         if res < 0 {
-            return Err(format!("Host storage_get failed with code {res}"));
+            return Err(match res {
+                ERR_PERM_STORAGE => "存储访问被宿主拒绝：manifest 未声明 Storage 权限".to_string(),
+                _ => format!("Host storage_get failed with code {res}"),
+            });
         }
         if out_ptr.is_null() || out_len == 0 {
             return Ok(None);
@@ -163,7 +177,10 @@ pub fn storage_set(key: &str, val: &[u8]) -> Result<(), String> {
             val.len() as u32,
         );
         if res < 0 {
-            Err(format!("Host storage_set failed with code {res}"))
+            Err(match res {
+                ERR_PERM_STORAGE => "存储访问被宿主拒绝：manifest 未声明 Storage 权限".to_string(),
+                _ => format!("Host storage_set failed with code {res}"),
+            })
         } else {
             Ok(())
         }

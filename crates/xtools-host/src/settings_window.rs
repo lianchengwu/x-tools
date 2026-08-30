@@ -148,7 +148,7 @@ pub fn run_settings() -> Result<(), Box<dyn std::error::Error>> {
         let ui_w = ui.as_weak();
         ui.on_window_drag_started(move || {
             if let Some(ui) = ui_w.upgrade() {
-                ds.on_drag_started(&ui.window());
+                ds.on_drag_started(ui.window());
             }
         });
     }
@@ -157,7 +157,7 @@ pub fn run_settings() -> Result<(), Box<dyn std::error::Error>> {
         let ui_w = ui.as_weak();
         ui.on_window_dragged(move |dx, dy| {
             if let Some(ui) = ui_w.upgrade() {
-                ds.on_dragged(&ui.window(), dx, dy);
+                ds.on_dragged(ui.window(), dx, dy);
             }
         });
     }
@@ -341,7 +341,7 @@ pub fn run_settings() -> Result<(), Box<dyn std::error::Error>> {
     {
         let ui_w = ui.as_weak();
         ui.on_opacity_changed(move |percent| {
-            let opacity = (percent as f32 / 100.0).clamp(
+            let opacity = (percent / 100.0).clamp(
                 window_prefs::MIN_OPACITY,
                 window_prefs::DEFAULT_OPACITY,
             );

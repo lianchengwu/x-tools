@@ -10,7 +10,11 @@ macro_rules! export_plugin {
             ptr
         }
 
+        /// 释放传出的缓冲区：ptr 来自本宏的序列化出口（`pack_json_to_host`）
+        /// 或 `_xtools_alloc`，两者都保证 capacity == len，因此以
+        /// `Vec::from_raw_parts(ptr, size, size)` 重建时释放布局与分配布局一致。
         #[unsafe(no_mangle)]
+        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub extern "C" fn _xtools_dealloc(ptr: *mut u8, size: u32) {
             if !ptr.is_null() && size > 0 {
                 unsafe {
@@ -21,38 +25,21 @@ macro_rules! export_plugin {
         #[unsafe(no_mangle)]
         pub extern "C" fn xtools_plugin_manifest() -> u64 {
             let manifest = <$plugin_type as $crate::XPlugin>::manifest();
-            match serde_json::to_vec(&manifest) {
-                Ok(mut bytes) => {
-                    let ptr = bytes.as_mut_ptr();
-                    let len = bytes.len() as u32;
-                    std::mem::forget(bytes);
-                    $crate::pack_ptr_len(ptr as u32, len)
-                }
-                Err(_) => 0,
-            }
+            $crate::pack_json_to_host(&manifest)
         }
         #[unsafe(no_mangle)]
         pub extern "C" fn xtools_plugin_init() -> u64 {
-            let init_result = <$plugin_type as $crate::XPlugin>::init();
-            match init_result {
+            match <$plugin_type as $crate::XPlugin>::init() {
                 Ok(instance) => {
                     unsafe {
                         PLUGIN_INSTANCE = Some(instance);
                     }
                     let ok_res: Result<(), String> = Ok(());
-                    let mut bytes = serde_json::to_vec(&ok_res).unwrap_or_default();
-                    let ptr = bytes.as_mut_ptr();
-                    let len = bytes.len() as u32;
-                    std::mem::forget(bytes);
-                    $crate::pack_ptr_len(ptr as u32, len)
+                    $crate::pack_json_to_host(&ok_res)
                 }
                 Err(err) => {
                     let err_res: Result<(), String> = Err(err);
-                    let mut bytes = serde_json::to_vec(&err_res).unwrap_or_default();
-                    let ptr = bytes.as_mut_ptr();
-                    let len = bytes.len() as u32;
-                    std::mem::forget(bytes);
-                    $crate::pack_ptr_len(ptr as u32, len)
+                    $crate::pack_json_to_host(&err_res)
                 }
             }
         }
@@ -67,17 +54,10 @@ macro_rules! export_plugin {
                 }
             };
 
-            match serde_json::to_vec(&view) {
-                Ok(mut bytes) => {
-                    let ptr = bytes.as_mut_ptr();
-                    let len = bytes.len() as u32;
-                    std::mem::forget(bytes);
-                    $crate::pack_ptr_len(ptr as u32, len)
-                }
-                Err(_) => 0,
-            }
+            $crate::pack_json_to_host(&view)
         }
         #[unsafe(no_mangle)]
+        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub extern "C" fn xtools_plugin_handle_event(ptr: *const u8, len: u32) -> u64 {
             if ptr.is_null() || len == 0 {
                 return 0;
@@ -113,15 +93,7 @@ macro_rules! export_plugin {
                 }),
             };
 
-            match serde_json::to_vec(&response) {
-                Ok(mut bytes) => {
-                    let ptr = bytes.as_mut_ptr();
-                    let len = bytes.len() as u32;
-                    std::mem::forget(bytes);
-                    $crate::pack_ptr_len(ptr as u32, len)
-                }
-                Err(_) => 0,
-            }
+            $crate::pack_json_to_host(&response)
         }
     };
 }

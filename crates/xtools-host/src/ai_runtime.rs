@@ -273,8 +273,6 @@ mod tests {
     use std::sync::Arc;
 
     fn spawn_stub(
-        status_line: &'static str,
-        content_type: &'static str,
         respond: impl FnOnce(&mut std::net::TcpStream) + Send + 'static,
     ) -> (u16, std::thread::JoinHandle<String>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -316,9 +314,8 @@ mod tests {
     fn sse_response(chunks: Vec<String>) -> impl FnOnce(&mut std::net::TcpStream) {
         move |stream: &mut std::net::TcpStream| {
             use std::io::Write;
-            let head = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
-            );
+            let head =
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
             let _ = stream.write_all(head.as_bytes());
             for c in chunks {
                 // chunked 编码：每段一个 chunk
@@ -397,8 +394,6 @@ mod tests {
     #[test]
     fn test_stream_chat_sse_deltas_and_request_shape() {
         let (port, server) = spawn_stub(
-            "200 OK",
-            "text/event-stream",
             sse_response(vec![
                 r#"data: {"choices":[{"delta":{"content":"你"}}]}"#.to_string(),
                 r#"data: {"choices":[{"delta":{"content":"好"}}]}"#.to_string(),
@@ -441,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_stream_chat_non_stream_fallback() {
-        let (port, server) = spawn_stub("200 OK", "application/json", |stream| {
+        let (port, server) = spawn_stub(|stream| {
             use std::io::Write;
             let body = r#"{"choices":[{"message":{"role":"assistant","content":"整体回答"}}]}"#;
             let _ = stream.write_all(
@@ -469,7 +464,7 @@ mod tests {
 
     #[test]
     fn test_stream_chat_http_error_surfaces_body() {
-        let (port, server) = spawn_stub("401 Unauthorized", "application/json", |stream| {
+        let (port, server) = spawn_stub(|stream| {
             use std::io::Write;
             let body = r#"{"error":{"message":"Invalid API key"}}"#;
             let _ = stream.write_all(
@@ -495,8 +490,6 @@ mod tests {
     #[test]
     fn test_stream_chat_cancel_returns_partial() {
         let (port, server) = spawn_stub(
-            "200 OK",
-            "text/event-stream",
             sse_response(vec![
                 r#"data: {"choices":[{"delta":{"content":"部分"}}]}"#.to_string(),
                 r#"data: {"choices":[{"delta":{"content":"内容"}}]}"#.to_string(),
@@ -510,7 +503,7 @@ mod tests {
         let first_cb = first.clone();
         let outcome = stream_chat(&params(port), &cancel, &move |full: String| {
             // 收到第一个增量后立即请求取消
-            if first_cb.lock().unwrap().clone() {
+            if *first_cb.lock().unwrap() {
                 *first_cb.lock().unwrap() = false;
                 cancel_cb.store(true, Ordering::Relaxed);
             }

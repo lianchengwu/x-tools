@@ -55,7 +55,7 @@ impl Default for WindowConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", content = "details")]
 pub enum Permission {
     /// Ability to read and write system clipboard

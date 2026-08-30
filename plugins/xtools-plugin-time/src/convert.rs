@@ -115,9 +115,9 @@ pub fn from_millis(ms: i64, tz: &TimeZone) -> Result<(i64, i64, String), jiff::E
 pub fn from_datetime(text: &str, tz: &TimeZone) -> Result<(i64, i64, String), jiff::Error> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
-        return Err(jiff::Error::from(
+        return Err(
             jiff::fmt::temporal::DateTimeParser::new().parse_date(trimmed).unwrap_err(),
-        ));
+        );
     }
 
     let parsed: DateTime = if trimmed.contains('.') {

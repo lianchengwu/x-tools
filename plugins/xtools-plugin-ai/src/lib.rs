@@ -407,7 +407,7 @@ impl XPlugin for AiPlugin {
                 _ => Ok(UiResponse::NoChange),
             },
             UiEvent::SelectChanged { id, index, .. } if id == "select_session" => {
-                self.select_session_by_index(index as usize);
+                self.select_session_by_index(index);
                 self.pending = false;
                 self.error = None;
                 self.status = format!("已切换会话：{}", self.active().title);
@@ -415,7 +415,7 @@ impl XPlugin for AiPlugin {
                 Ok(UiResponse::UpdateView(self.render()))
             }
             UiEvent::SelectChanged { id, index, .. } if id == "select_model" => {
-                self.config.select_by_index(index as usize);
+                self.config.select_by_index(index);
                 if let Ok(bytes) = serde_json::to_vec(&self.config) {
                     let _ = host::storage_set("config.json", &bytes);
                 }

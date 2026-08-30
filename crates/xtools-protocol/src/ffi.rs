@@ -16,6 +16,12 @@ pub const HOST_STORAGE_GET: &str = "host_storage_get";
 pub const HOST_STORAGE_SET: &str = "host_storage_set";
 pub const HOST_NOW_MILLIS: &str = "host_now_millis";
 
+/// 宿主能力入口的权限守卫错误码：插件未在 manifest `permissions` 中
+/// 声明相应权限时，宿主拒绝执行并返回以下负值。
+pub const ERR_PERM_CLIPBOARD: i32 = -20;
+pub const ERR_PERM_HTTP: i32 = -21;
+pub const ERR_PERM_STORAGE: i32 = -22;
+
 /// Pack a 32-bit pointer and 32-bit length into a single 64-bit integer for WASM function returns.
 #[inline]
 pub const fn pack_ptr_len(ptr: u32, len: u32) -> u64 {

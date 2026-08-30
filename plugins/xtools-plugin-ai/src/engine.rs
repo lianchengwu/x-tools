@@ -29,7 +29,7 @@ impl ProviderConfig {
 
 /// AI 服务配置：多服务商、多模型，外加当前选中的服务商与模型。
 /// base_url / api_key / model 为旧版单服务商字段，仅用于读取旧配置迁移，不再写入。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiConfig {
     #[serde(default)]
     pub providers: Vec<ProviderConfig>,
@@ -43,19 +43,6 @@ pub struct AiConfig {
     pub api_key: String,
     #[serde(default, skip_serializing)]
     pub model: String,
-}
-
-impl Default for AiConfig {
-    fn default() -> Self {
-        Self {
-            providers: Vec::new(),
-            selected_provider_id: String::new(),
-            selected_model: String::new(),
-            base_url: String::new(),
-            api_key: String::new(),
-            model: String::new(),
-        }
-    }
 }
 
 impl AiConfig {
@@ -106,7 +93,7 @@ impl AiConfig {
         // 选中的模型不在当前服务商列表中时回落到第一个
         if let Some(provider) = self.selected_provider() {
             if self.selected_model.is_empty()
-                || !provider.models.iter().any(|m| *m == self.selected_model)
+                || !provider.models.contains(&self.selected_model)
             {
                 self.selected_model = provider.models.first().cloned().unwrap_or_default();
                 changed = true;
@@ -493,7 +480,7 @@ mod tests {
         config.providers.push(provider("p1", "test", &["test-model", "unused"]));
         config.normalize();
         config.select_by_index(0);
-        let history = vec![
+        let history = [
             ChatMessage {
                 role: ChatRole::User,
                 content: "你好".to_string(),

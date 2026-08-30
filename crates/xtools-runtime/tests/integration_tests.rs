@@ -256,10 +256,8 @@ fn find_ai_error(node: &UiNode, out: &mut Vec<String>) {
                 find_ai_error(child, out);
             }
         }
-        UiNode::Label { text, variant, .. } => {
-            if *variant == LabelVariant::Error {
-                out.push(text.clone());
-            }
+        UiNode::Label { text, variant, .. } if *variant == LabelVariant::Error => {
+            out.push(text.clone());
         }
         _ => {}
     }
@@ -272,10 +270,8 @@ fn collect_drafts(node: &UiNode, out: &mut Vec<String>) {
                 collect_drafts(child, out);
             }
         }
-        UiNode::TextInput { id, value, .. } => {
-            if id == "input_draft" {
-                out.push(value.clone());
-            }
+        UiNode::TextInput { id, value, .. } if id == "input_draft" => {
+            out.push(value.clone());
         }
         _ => {}
     }
@@ -284,16 +280,14 @@ fn collect_drafts(node: &UiNode, out: &mut Vec<String>) {
 /// 每个 AI 测试用独立临时目录：libtest 并行执行时共享目录会被
 /// 其它测试的 remove_dir_all 删掉正在使用的 SQLite 存储（Windows 上尤甚）。
 fn load_ai_instance(test: &str) -> Option<(xtools_runtime::PluginInstance, PathBuf)> {
-    let Some(path) = require_plugin_artifact("test_ai_plugin_flow", "ai") else {
-        return None;
-    };
+    let path = require_plugin_artifact("test_ai_plugin_flow", "ai")?;
     let temp_dir = std::env::temp_dir().join(format!("xtools-ai-test-{test}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
     Some((PluginLoader::new().with_storage_root(temp_dir.clone()).load_instance(&path).expect("load ai plugin"), temp_dir))
 }
 
 /// 写入多服务商配置（SQLite 键值；temp_dir 即存储根目录）
-fn seed_ai_config(temp_dir: &PathBuf, selected_model: &str) {
+fn seed_ai_config(temp_dir: &std::path::Path, selected_model: &str) {
     let json = r#"{"providers":[{"id":"p1","name":"Stub","base_url":"http://127.0.0.1:9/v1","api_key":"sk-stub","models":["m1","m2"]}],"selected_provider_id":"p1","selected_model":"MODEL"}"#
         .replace("MODEL", selected_model);
     xtools_runtime::storage::write_to(temp_dir, "xtools.ai", "config.json", json.as_bytes())

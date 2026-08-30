@@ -156,6 +156,20 @@ impl Host {
                         permissions: vec![],
                     },
                 },
+                DiscoveredPlugin {
+                    path: PathBuf::from("ai.wasm"),
+                    manifest: PluginManifest {
+                        id: "xtools.ai".into(),
+                        name: "AI 问答".into(),
+                        version: "0.4.0".into(),
+                        description: "".into(),
+                        author: "".into(),
+                        mark: "智".into(),
+                        icon_svg: None,
+                        window: Default::default(),
+                        permissions: vec![],
+                    },
+                },
             ];
         }
 

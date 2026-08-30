@@ -48,7 +48,7 @@
                                 │ 扫描 plugins/*.wasm → 读取 Manifest
                                 │ 点击功能球 → spawn / 复用窗口
                 ┌───────────────▼───────────────┐
-                │      xtools-runner  (bin)     │
+                │   xtools run（宿主内置 runner） │
                 │       Slint 插件工具窗口       │
                 └───────────────┬───────────────┘
                                 │ 实例化 .wasm
@@ -71,10 +71,9 @@
 | `crates/xtools-protocol` | lib | 插件协议层：`PluginManifest`（元信息 / 窗口 / 权限）、声明式 UI 树 `UiView`/`UiNode`、事件与响应 `UiEvent`/`UiResponse` |
 | `crates/xtools-sdk` | lib | 插件开发 SDK：`XPlugin` trait、UI 快捷构建函数、`export_plugin!` 导出宏、宿主能力 API |
 | `crates/xtools-ui` | lib | 共享 UI 基建：Slint 主题 token 与通用组件、无边框窗口 chrome、单例 IPC、托盘、输入法引导 |
-| `crates/xtools-runtime` | lib | wasmtime 运行时：插件发现（`PluginLoader`）、实例生命周期（`PluginInstance`）、宿主函数注入与插件级存储 |
-| `crates/xtools-runner` | bin | 单插件窗口运行器：加载 WASM、双向同步 UI 视图与事件 |
-| `crates/xtools-host` | bin `xtools` | 悬浮球宿主（包名 `xtools-wasm`）：轨道菜单动画、插件调度、系统托盘 |
-| `plugins/xtools-plugin-*` | cdylib | 官方插件：time / json / trans，编译为 `.wasm` |
+| `crates/xtools-runtime` | lib | wasmtime 运行时：插件发现（`PluginLoader`）、实例生命周期（`PluginInstance`）、宿主函数注入与权限守卫、插件级存储 |
+| `crates/xtools-host` | bin `xtools` | 悬浮球宿主（包名 `xtools-wasm`）：轨道菜单动画、内置 runner（`xtools run`，加载 WASM 并双向同步 UI 视图与事件）、系统托盘 |
+| `plugins/xtools-plugin-*` | cdylib | 官方插件：time / json / trans / ai，编译为 `.wasm` |
 
 ## 🚀 快速开始
 

@@ -80,9 +80,6 @@ jobs:
       - name: Test xtools-runtime
         run: cargo test -p xtools-runtime
 
-      - name: Test xtools-runner
-        run: cargo test -p xtools-runner
-
       - name: Test xtools-host
         run: xvfb-run --auto-servernum cargo test -p xtools-wasm
 
@@ -151,10 +148,9 @@ jobs:
             exit $code
           }
 
-      - name: Test Plugins & Runner
+      - name: Test Plugins
         run: >
           cargo test --no-fail-fast
-          -p xtools-runner
           -p xtools-plugin-time -p xtools-plugin-json
           -p xtools-plugin-trans -p xtools-plugin-ai
 

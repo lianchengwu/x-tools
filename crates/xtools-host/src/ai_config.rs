@@ -101,7 +101,7 @@ impl AiConfigFile {
 
         if let Some(provider) = self.selected_provider() {
             if self.selected_model.is_empty()
-                || !provider.models.iter().any(|m| *m == self.selected_model)
+                || !provider.models.contains(&self.selected_model)
             {
                 self.selected_model = provider.models.first().cloned().unwrap_or_default();
                 changed = true;

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use xtools_sdk::host;
 use xtools_sdk::HttpRequest;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransConfig {
     #[serde(default)]
     pub engine_index: usize,
@@ -10,16 +10,6 @@ pub struct TransConfig {
     pub baidu_appid: String,
     #[serde(default)]
     pub baidu_key: String,
-}
-
-impl Default for TransConfig {
-    fn default() -> Self {
-        Self {
-            engine_index: 0,
-            baidu_appid: String::new(),
-            baidu_key: String::new(),
-        }
-    }
 }
 
 pub const SOURCE_LANGS: &[(&str, &str)] = &[

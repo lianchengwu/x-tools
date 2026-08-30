@@ -5,6 +5,8 @@ pub fn ease_out_cubic(x: f64) -> f64 {
     1.0 - t * t * t
 }
 
+/// 仅 Windows 后端的轨道球插值使用（见 windows/window.rs）
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
 }

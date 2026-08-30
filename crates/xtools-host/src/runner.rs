@@ -18,11 +18,14 @@ use xtools_ui::slint_chrome::{
 
 slint::include_modules!();
 
+/// AI 事件分发闭包类型
+type AiDispatch = Box<dyn Fn(UiEvent)>;
+
 thread_local! {
     /// AI 事件分发器（仅限 UI 线程调用）：后台线程的流式请求完成后，
     /// 通过 invoke/upgrade_in_event_loop 回到 UI 线程，用它把 AssistantDone
     /// 事件交回插件处理并同步视图。
-    static AI_DISPATCH: RefCell<Option<Box<dyn Fn(UiEvent)>>> = const { RefCell::new(None) };
+    static AI_DISPATCH: RefCell<Option<AiDispatch>> = const { RefCell::new(None) };
 }
 
 pub fn find_plugin_wasm(arg: &str) -> Option<PathBuf> {
@@ -212,7 +215,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         let ui_w = ui.as_weak();
         ui.on_window_drag_started(move || {
             if let Some(ui) = ui_w.upgrade() {
-                ds.on_drag_started(&ui.window());
+                ds.on_drag_started(ui.window());
             }
         });
     }
@@ -221,7 +224,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         let ui_w = ui.as_weak();
         ui.on_window_dragged(move |dx, dy| {
             if let Some(ui) = ui_w.upgrade() {
-                ds.on_dragged(&ui.window(), dx, dy);
+                ds.on_dragged(ui.window(), dx, dy);
             }
         });
     }
@@ -247,7 +250,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         let ui_w = ui.as_weak();
         ui.on_window_resized(move |dx, dy| {
             if let Some(ui) = ui_w.upgrade() {
-                rs.on_resized(&ui.window(), dx, dy, 420, 320);
+                rs.on_resized(ui.window(), dx, dy, 420, 320);
             }
         });
     }
@@ -256,7 +259,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         let ui_w = ui.as_weak();
         ui.on_expand_clicked(move || {
             if let Some(ui) = ui_w.upgrade() {
-                let is_exp = rs.toggle_expand(&ui.window(), normal_w, normal_h, expanded_w, expanded_h);
+                let is_exp = rs.toggle_expand(ui.window(), normal_w, normal_h, expanded_w, expanded_h);
                 ui.set_is_expanded(is_exp);
             }
         });
@@ -297,7 +300,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 Ok(UiResponse::CopyToClipboard(text)) => {
-                    let _ = copy_to_clipboard(&text);
+                    copy_to_clipboard(&text);
                     show_toast(ui_weak.clone(), "已复制到剪贴板", true);
                 }
                 Ok(UiResponse::CloseWindow) => {
@@ -831,7 +834,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         {
             let ui_w = ui.as_weak();
             ui.on_ai_copy_code(move |code| {
-                copy_to_clipboard(&code.to_string());
+                copy_to_clipboard(&code);
                 show_toast(ui_w.clone(), "代码已复制", true);
             });
         }
@@ -951,6 +954,7 @@ fn sync_time_view(ui: &RunnerWindow, root: &UiNode) {
     ui.set_time_error_local(error_local.into());
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_time_nodes(
     node: &UiNode,
     seconds: &mut Option<String>,
@@ -995,15 +999,13 @@ fn collect_time_nodes(
                 *tz_options = options.iter().map(|o| o.label.clone()).collect();
             }
         }
-        UiNode::Label { text, variant, .. } => {
-            if *variant == LabelVariant::Error {
-                if text.contains("秒") {
-                    *error_seconds = text.clone();
-                } else if text.contains("毫秒") {
-                    *error_millis = text.clone();
-                } else {
-                    *error_local = text.clone();
-                }
+        UiNode::Label { text, variant, .. } if *variant == LabelVariant::Error => {
+            if text.contains("秒") {
+                *error_seconds = text.clone();
+            } else if text.contains("毫秒") {
+                *error_millis = text.clone();
+            } else {
+                *error_local = text.clone();
             }
         }
         _ => {}
@@ -1152,6 +1154,7 @@ fn sync_trans_view(ui: &RunnerWindow, root: &UiNode) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_trans_nodes(
     node: &UiNode,
     source: &mut Option<String>,
@@ -1207,10 +1210,10 @@ fn collect_trans_nodes(
         UiNode::Label { text: t, variant, .. } => {
             if *variant == LabelVariant::Error {
                 *error_text = t.clone();
-            } else if *variant == LabelVariant::Secondary || *variant == LabelVariant::Muted {
-                if t.contains("引擎") || t.contains("翻译") {
-                    *status_text = t.clone();
-                }
+            } else if (*variant == LabelVariant::Secondary || *variant == LabelVariant::Muted)
+                && (t.contains("引擎") || t.contains("翻译"))
+            {
+                *status_text = t.clone();
             }
         }
         _ => {}
@@ -1386,10 +1389,10 @@ fn collect_ai_nodes(
         UiNode::Label { text: t, variant, .. } => {
             if *variant == LabelVariant::Error {
                 *error_text = t.clone();
-            } else if *variant == LabelVariant::Secondary || *variant == LabelVariant::Muted {
-                if t.contains("AI") || t.contains("剪贴板") || t.contains("模型") {
-                    *status_text = t.clone();
-                }
+            } else if (*variant == LabelVariant::Secondary || *variant == LabelVariant::Muted)
+                && (t.contains("AI") || t.contains("剪贴板") || t.contains("模型"))
+            {
+                *status_text = t.clone();
             }
         }
         _ => {}

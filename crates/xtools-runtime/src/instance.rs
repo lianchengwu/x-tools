@@ -40,6 +40,8 @@ impl PluginInstance {
         let manifest: PluginManifest = Self::read_and_dealloc(&mut store, &instance, ptr, len)?;
 
         store.data_mut().plugin_id = manifest.id.clone();
+        // 注入 manifest 声明的权限集合，宿主能力入口据此执行权限守卫
+        store.data_mut().set_permissions(manifest.permissions.clone());
 
         Ok(Self {
             store,

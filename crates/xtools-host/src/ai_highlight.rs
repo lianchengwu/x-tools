@@ -23,7 +23,7 @@ pub fn split_segments(content: &str) -> Vec<Segment> {
     let mut text_buf = String::new();
     let mut lines = content.lines().peekable();
 
-    let mut flush_text = |buf: &mut String, out: &mut Vec<Segment>| {
+    let flush_text = |buf: &mut String, out: &mut Vec<Segment>| {
         if !buf.is_empty() {
             out.push(Segment::Text(buf.trim_end_matches('\n').to_string()));
             buf.clear();
@@ -106,7 +106,7 @@ pub fn tokenize_line(line: &str, lang: &str, state: &mut ScanState) -> Vec<(Stri
     let expanded = line.replace('\t', "    ");
     let line = expanded.trim_end_matches('\r');
     let mut tokens: Vec<(String, i32)> = Vec::new();
-    let mut push = |tokens: &mut Vec<(String, i32)>, text: String, kind: i32| {
+    let push = |tokens: &mut Vec<(String, i32)>, text: String, kind: i32| {
         if text.is_empty() {
             return;
         }

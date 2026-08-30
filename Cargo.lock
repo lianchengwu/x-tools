@@ -7480,23 +7480,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "xtools-runner"
-version = "0.5.2"
-dependencies = [
- "dirs",
- "env_logger",
- "log",
- "parking_lot",
- "serde_json",
- "slint",
- "slint-build",
- "wasmtime",
- "xtools-protocol",
- "xtools-runtime",
- "xtools-ui",
-]
-
-[[package]]
 name = "xtools-runtime"
 version = "0.5.2"
 dependencies = [
