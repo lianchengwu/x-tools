@@ -1,9 +1,13 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
 use slint::ComponentHandle;
+use slint::Model;
 use xtools_protocol::*;
 use xtools_runtime::{PluginInstance, PluginLoader};
 use xtools_ui::boot::{capture_target_desktop, init_input_method_env, take_activation_token};
@@ -13,6 +17,13 @@ use xtools_ui::slint_chrome::{
 };
 
 slint::include_modules!();
+
+thread_local! {
+    /// AI 事件分发器（仅限 UI 线程调用）：后台线程的流式请求完成后，
+    /// 通过 invoke/upgrade_in_event_loop 回到 UI 线程，用它把 AssistantDone
+    /// 事件交回插件处理并同步视图。
+    static AI_DISPATCH: RefCell<Option<Box<dyn Fn(UiEvent)>>> = const { RefCell::new(None) };
+}
 
 pub fn find_plugin_wasm(arg: &str) -> Option<PathBuf> {
     let direct_path = PathBuf::from(arg);
@@ -188,6 +199,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
     ui.set_window_icon(manifest.mark.clone().into());
     ui.set_resizable(manifest.window.resizable);
     ui.set_show_expand_button(manifest.window.resizable);
+    ui.set_window_opacity(crate::window_prefs::load().normalized_opacity());
 
     sync_ui_view(&ui, &initial_view, plugin_kind);
 
@@ -613,24 +625,159 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     // Wire AI Plugin Callbacks
     if plugin_kind == "ai" {
+        let ai_cancel = Arc::new(AtomicBool::new(false));
+
+        // UI 线程事件分发器：后台流式请求完成后回到 UI 线程回填结果
+        {
+            let plugin_cell = plugin_cell.clone();
+            let ui_w = ui.as_weak();
+            let p_kind = plugin_kind.to_string();
+            AI_DISPATCH.with(|slot| {
+                *slot.borrow_mut() = Some(Box::new(move |event: UiEvent| {
+                    let mut p = plugin_cell.borrow_mut();
+                    if let Ok(UiResponse::UpdateView(view)) = p.handle_event(&event) {
+                        if let Some(u) = ui_w.upgrade() {
+                            sync_ui_view(&u, &view, &p_kind);
+                        }
+                    }
+                }));
+            });
+        }
+
         {
             let h = handle_event.clone();
             let ui_w = ui.as_weak();
+            let ai_cancel = ai_cancel.clone();
+            let plugin_id = manifest.id.clone();
             ui.on_ai_send(move || {
-                if let Some(u) = ui_w.upgrade() {
-                    u.set_ai_pending(true);
+                let Some(u) = ui_w.upgrade() else {
+                    return;
+                };
+                if u.get_ai_pending() {
+                    // 生成中点击发送按钮 = 停止生成
+                    ai_cancel.store(true, Ordering::Relaxed);
+                    return;
                 }
+
+                // 阶段 A：插件校验并立即入列用户消息（无网络，秒回）
+                ai_cancel.store(false, Ordering::Relaxed);
                 h(UiEvent::Click {
                     id: "btn_send".to_string(),
                 });
-                if let Some(u) = ui_w.upgrade() {
-                    u.set_ai_pending(false);
+
+                // 校验失败（空输入/未配置）时没有新增用户消息，直接返回
+                let model = u.get_ai_messages();
+                let started = match model.row_count().checked_sub(1) {
+                    Some(last) => matches!(model.row_data(last), Some(m) if m.role == 0),
+                    None => false,
+                };
+                if !started {
+                    return;
                 }
+
+                u.set_ai_pending(true);
+                u.set_ai_stream_text("".into());
+                // 立即显示「正在思考…」占位气泡
+                if let Some(vm) = model
+                    .as_any()
+                    .downcast_ref::<slint::VecModel<AiChatMessage>>()
+                {
+                    vm.push(AiChatMessage {
+                        role: 1,
+                        content: "".into(),
+                        segments: slint::ModelRc::default(),
+                    });
+                }
+
+                // 从插件存储读取配置与对话历史，交给后台线程执行流式请求
+                let ctx = match crate::ai_runtime::load_chat_context(&plugin_id) {
+                    Ok(c) if !c.messages.is_empty() => c,
+                    Ok(_) => {
+                        u.set_ai_pending(false);
+                        h(UiEvent::AssistantDone {
+                            content: String::new(),
+                            error: Some("对话历史为空".to_string()),
+                            aborted: false,
+                        });
+                        return;
+                    }
+                    Err(e) => {
+                        u.set_ai_pending(false);
+                        h(UiEvent::AssistantDone {
+                            content: String::new(),
+                            error: Some(e),
+                            aborted: false,
+                        });
+                        return;
+                    }
+                };
+
+                let ui_delta = ui_w.clone();
+                let ui_finish = ui_w.clone();
+                let cancel_for_thread = ai_cancel.clone();
+                std::thread::spawn(move || {
+                    let on_delta = move |full: String| {
+                        let ui_delta = ui_delta.clone();
+                        let _ = ui_delta.upgrade_in_event_loop(move |u| {
+                            let text: slint::SharedString = full.into();
+                            u.set_ai_stream_text(text.clone());
+                            let model = u.get_ai_messages();
+                            let len = model.row_count();
+                            if len > 0 {
+                                if let Some(vm) = model
+                                    .as_any()
+                                    .downcast_ref::<slint::VecModel<AiChatMessage>>()
+                                {
+                                    vm.set_row_data(
+                                        len - 1,
+                                        AiChatMessage {
+                                            role: 1,
+                                            content: text.clone(),
+                                            segments: build_chat_segments(&text),
+                                        },
+                                    );
+                                }
+                            }
+                        });
+                    };
+
+                    let outcome = crate::ai_runtime::stream_chat(&ctx, &cancel_for_thread, &on_delta);
+
+                    let _ = ui_finish.upgrade_in_event_loop(move |u| {
+                        u.set_ai_pending(false);
+                        u.set_ai_stream_text("".into());
+                        let event = match outcome {
+                            crate::ai_runtime::AiOutcome::Completed(text) => UiEvent::AssistantDone {
+                                content: text,
+                                error: None,
+                                aborted: false,
+                            },
+                            crate::ai_runtime::AiOutcome::Aborted(text) => UiEvent::AssistantDone {
+                                content: text,
+                                error: None,
+                                aborted: true,
+                            },
+                            crate::ai_runtime::AiOutcome::Failed(e) => UiEvent::AssistantDone {
+                                content: String::new(),
+                                error: Some(e),
+                                aborted: false,
+                            },
+                        };
+                        AI_DISPATCH.with(|slot| {
+                            if let Some(dispatch) = slot.borrow().as_ref() {
+                                dispatch(event);
+                            }
+                        });
+                    });
+                });
             });
         }
         {
             let h = handle_event.clone();
+            let ai_cancel = ai_cancel.clone();
             ui.on_ai_clear(move || {
+                // 清空对话时同时取消进行中的生成
+                ai_cancel.store(true, Ordering::Relaxed);
                 h(UiEvent::Click {
                     id: "btn_clear".to_string(),
                 });
@@ -651,6 +798,23 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
                     id: "input_draft".to_string(),
                     value: t.to_string(),
                 });
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_ai_model_changed(move |idx| {
+                h(UiEvent::SelectChanged {
+                    id: "select_model".to_string(),
+                    index: idx as usize,
+                    value: idx.to_string(),
+                });
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_ai_copy_code(move |code| {
+                copy_to_clipboard(&code.to_string());
+                show_toast(ui_w.clone(), "代码已复制", true);
             });
         }
     }
@@ -1038,11 +1202,58 @@ fn collect_trans_nodes(
 // -----------------------------------------------------------------------------
 // AI Plugin View Sync
 // -----------------------------------------------------------------------------
+
+/// 把消息内容切分为文本/代码段，代码段逐行分词着色（供 Slint 渲染）
+fn build_chat_segments(content: &str) -> slint::ModelRc<AiSegment> {
+    use crate::ai_highlight::{split_segments, tokenize_line, ScanState};
+
+    let mut segments: Vec<AiSegment> = Vec::new();
+    for seg in split_segments(content) {
+        match seg {
+            crate::ai_highlight::Segment::Text(text) => segments.push(AiSegment {
+                is_code: false,
+                text: text.into(),
+                lang: "".into(),
+                code: "".into(),
+                lines: slint::ModelRc::default(),
+            }),
+            crate::ai_highlight::Segment::Code { lang, code } => {
+                let mut state = ScanState::default();
+                let lines: Vec<CodeLineItem> = code
+                    .lines()
+                    .map(|line| {
+                        let tokens: Vec<CodeToken> = tokenize_line(line, &lang, &mut state)
+                            .into_iter()
+                            .map(|(text, kind)| CodeToken {
+                                text: text.into(),
+                                kind,
+                            })
+                            .collect();
+                        CodeLineItem {
+                            tokens: slint::ModelRc::new(slint::VecModel::from(tokens)),
+                        }
+                    })
+                    .collect();
+                segments.push(AiSegment {
+                    is_code: true,
+                    text: "".into(),
+                    lang: lang.into(),
+                    code: code.into(),
+                    lines: slint::ModelRc::new(slint::VecModel::from(lines)),
+                });
+            }
+        }
+    }
+    slint::ModelRc::new(slint::VecModel::from(segments))
+}
+
 fn sync_ai_view(ui: &RunnerWindow, root: &UiNode) {
     let mut messages: Vec<ChatMessage> = Vec::new();
     let mut draft = None;
     let mut error_text = String::new();
     let mut status_text = String::new();
+    let mut model_options: Vec<String> = Vec::new();
+    let mut model_index = 0usize;
 
     collect_ai_nodes(
         root,
@@ -1050,6 +1261,8 @@ fn sync_ai_view(ui: &RunnerWindow, root: &UiNode) {
         &mut draft,
         &mut error_text,
         &mut status_text,
+        &mut model_options,
+        &mut model_index,
     );
 
     let items: Vec<AiChatMessage> = messages
@@ -1060,8 +1273,19 @@ fn sync_ai_view(ui: &RunnerWindow, root: &UiNode) {
                 ChatRole::Assistant => 1,
             },
             content: m.content.clone().into(),
+            segments: build_chat_segments(&m.content),
         })
         .collect();
+    // 生成中：同步插件视图时保留末尾的流式占位气泡（内容可能为空=思考中）
+    let mut items = items;
+    if ui.get_ai_pending() {
+        let stream_text = ui.get_ai_stream_text().to_string();
+        items.push(AiChatMessage {
+            role: 1,
+            content: stream_text.clone().into(),
+            segments: build_chat_segments(&stream_text),
+        });
+    }
     ui.set_ai_messages(slint::ModelRc::new(slint::VecModel::from(items)));
 
     if let Some(d) = draft {
@@ -1071,19 +1295,35 @@ fn sync_ai_view(ui: &RunnerWindow, root: &UiNode) {
     if !status_text.is_empty() {
         ui.set_ai_status(status_text.into());
     }
+
+    let options_model: Vec<slint::SharedString> =
+        model_options.into_iter().map(Into::into).collect();
+    ui.set_ai_model_options(slint::ModelRc::new(slint::VecModel::from(options_model)));
+    ui.set_ai_model_index(model_index as i32);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_ai_nodes(
     node: &UiNode,
     messages: &mut Vec<ChatMessage>,
     draft: &mut Option<String>,
     error_text: &mut String,
     status_text: &mut String,
+    model_options: &mut Vec<String>,
+    model_index: &mut usize,
 ) {
     match node {
         UiNode::Container { children, .. } => {
             for child in children {
-                collect_ai_nodes(child, messages, draft, error_text, status_text);
+                collect_ai_nodes(
+                    child,
+                    messages,
+                    draft,
+                    error_text,
+                    status_text,
+                    model_options,
+                    model_index,
+                );
             }
         }
         UiNode::Chat { messages: msgs, .. } => {
@@ -1094,11 +1334,22 @@ fn collect_ai_nodes(
                 *draft = Some(value.clone());
             }
         }
+        UiNode::Select {
+            id,
+            options,
+            selected_index,
+            ..
+        } => {
+            if id == "select_model" {
+                *model_options = options.iter().map(|o| o.label.clone()).collect();
+                *model_index = *selected_index;
+            }
+        }
         UiNode::Label { text: t, variant, .. } => {
             if *variant == LabelVariant::Error {
                 *error_text = t.clone();
             } else if *variant == LabelVariant::Secondary || *variant == LabelVariant::Muted {
-                if t.contains("AI") || t.contains("剪贴板") {
+                if t.contains("AI") || t.contains("剪贴板") || t.contains("模型") {
                     *status_text = t.clone();
                 }
             }

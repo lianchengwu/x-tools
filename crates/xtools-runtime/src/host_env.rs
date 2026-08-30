@@ -17,6 +17,19 @@ pub struct HostContext {
     pub http_client: ureq::Agent,
 }
 
+/// 构建宿主 HTTP 客户端。
+///
+/// `http_status_as_error(false)`：4xx/5xx 作为正常响应透传给插件（保留真实状态码与
+/// 响应体），由插件自行判断 `is_success()`；否则 ureq 会丢弃错误响应，插件只能看到
+/// 无意义的 502。
+fn build_http_agent(global_timeout: std::time::Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(global_timeout))
+        .http_status_as_error(false)
+        .build()
+        .into()
+}
+
 impl HostContext {
     pub fn new(plugin_id: String, storage_dir: PathBuf) -> Self {
         let clipboard = match Clipboard::new() {
@@ -27,10 +40,7 @@ impl HostContext {
             }
         };
 
-        let http_client = ureq::Agent::config_builder()
-            .timeout_global(Some(std::time::Duration::from_secs(10)))
-            .build()
-            .into();
+        let http_client = build_http_agent(std::time::Duration::from_secs(10));
 
         Self {
             plugin_id,
@@ -181,7 +191,14 @@ pub fn register_host_functions(linker: &mut Linker<HostContext>) -> Result<(), R
                 }
             };
 
-            let client = caller.data().http_client.clone();
+            // 插件可通过 HttpRequest.timeout_ms 请求更长的超时（如 LLM 长回答），
+            // 未指定时沿用宿主默认的 10s 全局超时。
+            let client = match req.timeout_ms {
+                Some(ms) if ms > 0 => {
+                    crate::host_env::build_http_agent(std::time::Duration::from_millis(ms))
+                }
+                _ => caller.data().http_client.clone(),
+            };
             let method = req.method.to_uppercase();
             let http_res = match method.as_str() {
                 "GET" => {

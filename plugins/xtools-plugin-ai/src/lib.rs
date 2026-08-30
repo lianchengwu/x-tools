@@ -1,13 +1,12 @@
 pub mod engine;
 
-use engine::{AiConfig, chat_completion};
+use engine::AiConfig;
 use serde::{Deserialize, Serialize};
 use xtools_sdk::*;
 
 /// 对话历史持久化上限（条数），防止无限增长
 const MAX_HISTORY: usize = 100;
 const HISTORY_KEY: &str = "history.json";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiPlugin {
     /// 完整对话历史（多轮上下文），持久化到插件存储
@@ -54,6 +53,15 @@ impl AiPlugin {
             messages.remove(0);
         }
     }
+
+    /// 请求失败/无内容时回滚末尾的用户消息到草稿，便于修改后重试
+    fn rollback_last_user_message(&mut self) {
+        if let Some(m) = self.messages.pop() {
+            if m.role == ChatRole::User {
+                self.draft = m.content;
+            }
+        }
+    }
 }
 
 impl XPlugin for AiPlugin {
@@ -87,6 +95,12 @@ impl XPlugin for AiPlugin {
                 config = loaded;
             }
         }
+        // 迁移旧版单服务商配置；结构变化时写回，保证设置窗口读到一致格式
+        if config.normalize() {
+            if let Ok(bytes) = serde_json::to_vec(&config) {
+                let _ = host::storage_set("config.json", &bytes);
+            }
+        }
 
         // 恢复上次对话与草稿
         let saved = Self::load_persisted();
@@ -104,6 +118,12 @@ impl XPlugin for AiPlugin {
             (saved.draft, "AI 就绪：已恢复上次对话，可继续追问".to_string())
         } else {
             (saved.draft, "AI 就绪：剪贴板为空，请输入问题".to_string())
+        };
+        let status = match config.selected_provider() {
+            Some(_p) if !config.selected_model.is_empty() => {
+                format!("{status}；当前模型：{}", config.selected_model)
+            }
+            _ => format!("{status}；尚未配置模型，请在「设置」中添加"),
         };
 
         Ok(Self {
@@ -130,17 +150,26 @@ impl XPlugin for AiPlugin {
         // 2. Chat Conversation View
         children.push(chat_viewer("chat_messages", self.messages.clone()));
 
-        // 3. Status / Error Note
+        // 3. Model Selector（AI 窗口输入框底部展示与切换）
+        let options: Vec<SelectOption> = self
+            .config
+            .model_options()
+            .into_iter()
+            .map(|(_, _, display)| SelectOption::new(display.clone(), display))
+            .collect();
+        children.push(select("select_model", options, self.config.selected_index()));
+
+        // 4. Status / Error Note
         if let Some(err) = &self.error {
             children.push(error_label(err));
         } else {
             children.push(secondary_label(&self.status));
         }
 
-        // 4. Input Bar: draft input + send button
+        // 5. Input Bar: draft input + send button
         children.push(row(vec![
             text_area("input_draft", &self.draft, 3),
-            primary_button("btn_send", if self.pending { "回答中…" } else { "🚀 发送" }),
+            primary_button("btn_send", if self.pending { "回答中…" } else { "发送" }),
         ]));
 
         UiView::new(column(children))
@@ -149,6 +178,8 @@ impl XPlugin for AiPlugin {
     fn handle_event(&mut self, event: UiEvent) -> Result<UiResponse, String> {
         match event {
             UiEvent::Click { id } => match id.as_str() {
+                // 阶段 A：校验并立即入列用户消息（不做网络请求，窗口不阻塞）。
+                // 实际的 HTTP 请求由宿主后台线程执行，完成后以 AssistantDone 回填。
                 "btn_send" => {
                     self.error = None;
                     let text = self.draft.trim().to_string();
@@ -159,35 +190,19 @@ impl XPlugin for AiPlugin {
 
                     if !self.config.is_configured() {
                         self.error = Some(
-                            "请先在托盘菜单「设置」中配置 AI 接口地址、API Key 与模型名。"
-                                .to_string(),
+                            "请先在托盘菜单「设置」中添加服务商、API Key 与模型。".to_string(),
                         );
                         return Ok(UiResponse::UpdateView(self.render()));
                     }
 
-                    // 先入列用户消息并清空草稿，失败时回滚以便重试
                     self.messages.push(ChatMessage {
                         role: ChatRole::User,
-                        content: text.clone(),
+                        content: text,
                     });
                     self.draft.clear();
                     Self::trim_history(&mut self.messages);
-
-                    match chat_completion(&self.config, &self.messages) {
-                        Ok(res) => {
-                            self.messages.push(ChatMessage {
-                                role: ChatRole::Assistant,
-                                content: res,
-                            });
-                            self.status = "AI 已回答，可继续追问".to_string();
-                            self.error = None;
-                        }
-                        Err(e) => {
-                            self.messages.pop();
-                            self.draft = text;
-                            self.error = Some(e);
-                        }
-                    }
+                    self.pending = true;
+                    self.status = "正在请求 AI…".to_string();
                     self.persist();
                     Ok(UiResponse::UpdateView(self.render()))
                 }
@@ -232,6 +247,59 @@ impl XPlugin for AiPlugin {
                 }
                 _ => Ok(UiResponse::NoChange),
             },
+            UiEvent::SelectChanged { id, index, .. } if id == "select_model" => {
+                self.config.select_by_index(index as usize);
+                if let Ok(bytes) = serde_json::to_vec(&self.config) {
+                    let _ = host::storage_set("config.json", &bytes);
+                }
+                self.error = None;
+                self.status = match self.config.selected_provider() {
+                    Some(p) if !self.config.selected_model.is_empty() => format!(
+                        "已切换模型：{} / {}",
+                        p.name.trim(),
+                        self.config.selected_model
+                    ),
+                    _ => "未选择模型".to_string(),
+                };
+                Ok(UiResponse::UpdateView(self.render()))
+            }
+            // 宿主后台请求完成：追加回答 / 失败回滚 / 中止保留部分内容
+            UiEvent::AssistantDone { content, error, aborted } => {
+                self.pending = false;
+                // 过期保护：当前对话必须以用户消息结尾（请求期间被清空等场景直接丢弃）
+                if self.messages.last().map(|m| m.role) != Some(ChatRole::User) {
+                    return Ok(UiResponse::UpdateView(self.render()));
+                }
+                let text = content.trim().to_string();
+                match error {
+                    Some(e) => {
+                        self.rollback_last_user_message();
+                        self.error = Some(format!("{e}（已保留输入，可再次点击「发送」重试）"));
+                    }
+                    None if text.is_empty() => {
+                        self.rollback_last_user_message();
+                        self.error = Some(if aborted {
+                            "已停止生成。".to_string()
+                        } else {
+                            "AI 未返回回答内容".to_string()
+                        });
+                    }
+                    None => {
+                        self.messages.push(ChatMessage {
+                            role: ChatRole::Assistant,
+                            content: text,
+                        });
+                        self.error = None;
+                        self.status = if aborted {
+                            "已停止生成，已保留部分回答".to_string()
+                        } else {
+                            "AI 已回答，可继续追问".to_string()
+                        };
+                    }
+                }
+                self.persist();
+                Ok(UiResponse::UpdateView(self.render()))
+            }
             _ => Ok(UiResponse::NoChange),
         }
     }
@@ -323,6 +391,160 @@ mod tests {
         // 发送被拦截，草稿保留
         assert_eq!(plugin.draft, "你好");
         assert!(plugin.messages.is_empty());
+    }
+
+    fn configured_plugin() -> AiPlugin {
+        let mut plugin = AiPlugin::init().unwrap();
+        plugin.config.providers.push(engine::ProviderConfig {
+            id: "p1".into(),
+            name: "A".into(),
+            base_url: "https://a.example.com/v1".into(),
+            api_key: "sk-a".into(),
+            models: vec!["m1".into()],
+        });
+        plugin.config.normalize();
+        plugin
+    }
+
+    #[test]
+    fn test_send_phase_a_appends_user_message_immediately() {
+        let mut plugin = configured_plugin();
+        plugin.draft = "你好".into();
+        let resp = plugin
+            .handle_event(UiEvent::Click { id: "btn_send".into() })
+            .unwrap();
+        assert!(matches!(resp, UiResponse::UpdateView(_)));
+        // 用户消息立即入列，草稿清空，进入等待状态，不产生错误
+        assert_eq!(plugin.messages.len(), 1);
+        assert_eq!(plugin.messages[0].content, "你好");
+        assert!(plugin.draft.is_empty());
+        assert!(plugin.pending);
+        assert!(plugin.error.is_none());
+    }
+
+    #[test]
+    fn test_assistant_done_success_appends_answer() {
+        let mut plugin = configured_plugin();
+        plugin.draft = "你好".into();
+        plugin.handle_event(UiEvent::Click { id: "btn_send".into() }).unwrap();
+        plugin
+            .handle_event(UiEvent::AssistantDone {
+                content: "答案".into(),
+                error: None,
+                aborted: false,
+            })
+            .unwrap();
+        assert_eq!(plugin.messages.len(), 2);
+        assert_eq!(plugin.messages[1].content, "答案");
+        assert!(!plugin.pending);
+        assert!(plugin.status.contains("已回答"));
+        assert!(plugin.error.is_none());
+    }
+
+    #[test]
+    fn test_assistant_done_error_rolls_back_to_draft() {
+        let mut plugin = configured_plugin();
+        plugin.draft = "你好".into();
+        plugin.handle_event(UiEvent::Click { id: "btn_send".into() }).unwrap();
+        plugin
+            .handle_event(UiEvent::AssistantDone {
+                content: String::new(),
+                error: Some("AI 接口返回 HTTP 401: bad key".into()),
+                aborted: false,
+            })
+            .unwrap();
+        assert!(plugin.messages.is_empty());
+        assert_eq!(plugin.draft, "你好");
+        assert!(plugin.error.as_deref().unwrap().contains("401"));
+        assert!(!plugin.pending);
+    }
+
+    #[test]
+    fn test_assistant_done_abort_keeps_partial() {
+        let mut plugin = configured_plugin();
+        plugin.draft = "写首诗".into();
+        plugin.handle_event(UiEvent::Click { id: "btn_send".into() }).unwrap();
+        plugin
+            .handle_event(UiEvent::AssistantDone {
+                content: "春天来了".into(),
+                error: None,
+                aborted: true,
+            })
+            .unwrap();
+        assert_eq!(plugin.messages.len(), 2);
+        assert_eq!(plugin.messages[1].content, "春天来了");
+        assert!(plugin.status.contains("停止"));
+    }
+
+    #[test]
+    fn test_assistant_done_stale_is_ignored() {
+        let mut plugin = configured_plugin();
+        plugin.draft = "你好".into();
+        plugin.handle_event(UiEvent::Click { id: "btn_send".into() }).unwrap();
+        // 请求期间用户清空了对话，迟到的结果应被丢弃
+        plugin.handle_event(UiEvent::Click { id: "btn_clear".into() }).unwrap();
+        plugin
+            .handle_event(UiEvent::AssistantDone {
+                content: "迟到的回答".into(),
+                error: None,
+                aborted: false,
+            })
+            .unwrap();
+        assert!(plugin.messages.is_empty());
+        assert!(!plugin.pending);
+        assert!(plugin.error.is_none());
+    }
+
+    #[test]
+    fn test_select_model_event_updates_selection_and_render() {
+        let mut plugin = AiPlugin::init().unwrap();
+        plugin.config.providers.push(engine::ProviderConfig {
+            id: "p1".into(),
+            name: "A".into(),
+            base_url: "https://a.example.com/v1".into(),
+            api_key: "sk-a".into(),
+            models: vec!["m1".into(), "m2".into()],
+        });
+        plugin.config.providers.push(engine::ProviderConfig {
+            id: "p2".into(),
+            name: "B".into(),
+            base_url: "https://b.example.com/v1".into(),
+            api_key: "sk-b".into(),
+            models: vec!["m3".into()],
+        });
+        plugin.config.normalize();
+
+        // 初始选中第一个
+        assert_eq!(plugin.config.selected_index(), 0);
+
+        // 切换到 B / m3（索引 2）
+        let resp = plugin
+            .handle_event(UiEvent::SelectChanged {
+                id: "select_model".to_string(),
+                index: 2,
+                value: "2".to_string(),
+            })
+            .unwrap();
+        assert!(matches!(resp, UiResponse::UpdateView(_)));
+        assert_eq!(plugin.config.selected_provider_id, "p2");
+        assert_eq!(plugin.config.selected_model, "m3");
+        assert!(plugin.status.contains("B / m3"), "{}", plugin.status);
+
+        // 渲染中包含 select_model 节点且选中索引正确
+        let view = plugin.render();
+        assert!(find_select_node(&view.root));
+    }
+
+    fn find_select_node(node: &UiNode) -> bool {
+        match node {
+            UiNode::Select { id, selected_index, .. } => {
+                id == "select_model" && *selected_index == 2
+            }
+            UiNode::Container { children, .. } | UiNode::Card { children, .. } => {
+                children.iter().any(find_select_node)
+            }
+            _ => false,
+        }
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { ToolShell, MultilineEditor, ActionButton, CopyButton, IconButton, ValueInput, FieldWithAction, DropdownSelector, InlineError, InlineNote, Theme } from "@xtools-ui/components.slint";
-import { ListView, ScrollView } from "std-widgets.slint";
+import { ListView, ScrollView, Slider } from "std-widgets.slint";
 
 export struct TreeNodeItem {
     id: int,
@@ -13,9 +13,146 @@ export struct TreeNodeItem {
     has-comma: bool,
 }
 
+export struct CodeToken {
+    text: string,
+    kind: int, // 0 plain, 1 keyword, 2 string, 3 comment, 4 number, 5 type
+}
+
+export struct CodeLineItem {
+    tokens: [CodeToken],
+}
+
+export struct AiSegment {
+    is-code: bool,
+    text: string,       // 普通文本段
+    lang: string,       // 代码段语言标注
+    code: string,       // 代码段原文（复制用）
+    lines: [CodeLineItem],
+}
+
 export struct AiChatMessage {
     role: int, // 0 = user, 1 = assistant
     content: string,
+    segments: [AiSegment],
+}
+
+export struct AiProviderItem {
+    id: string,
+    name: string,
+    base-url: string,
+    api-key: string,
+    models: [string],
+}
+
+// AI 聊天输入框：上编辑区 + 框内底部「模型选择 / 发送」工具条
+component ChatComposer inherits Rectangle {
+    in-out property <string> text;
+    in property <[string]> model-options;
+    in-out property <int> model-index: 0;
+    in property <bool> pending;
+    callback edited(string);
+    callback send-clicked();
+    callback model-changed(int);
+
+    height: 96px;
+    border-radius: Theme.radius-control;
+    border-width: text-input.has-focus ? 1.5px : 1px;
+    border-color: text-input.has-focus ? Theme.primary : Theme.border;
+    background: Theme.card-bg;
+    clip: true;
+
+    animate border-color { duration: 100ms; }
+
+    VerticalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        spacing: 6px;
+
+        // 编辑区
+        Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+
+            scroll := ScrollView {
+                width: 100%;
+                height: 100%;
+                viewport-width: self.visible-width;
+                viewport-height: max(self.visible-height, text-input.preferred-height);
+
+                text-input := TextInput {
+                    width: parent.width;
+                    single-line: false;
+                    wrap: word-wrap;
+                    font-size: Theme.font-size-body;
+                    color: Theme.foreground;
+                    selection-background-color: Theme.selection;
+                    selection-foreground-color: Theme.foreground;
+                    text <=> root.text;
+
+                    edited => { root.edited(self.text); }
+                    key-pressed(event) => {
+                        if (event.text == "\n" && !event.modifiers.shift) {
+                            root.send-clicked();
+                            accept
+                        } else {
+                            reject
+                        }
+                    }
+                    cursor-position-changed(cpos) => {
+                        if (cpos.y + scroll.viewport-y < 0px) {
+                            scroll.viewport-y = min(0px, max(scroll.visible-height - self.height, -cpos.y));
+                        } else if (cpos.y + scroll.viewport-y > scroll.visible-height - 20px) {
+                            scroll.viewport-y = min(0px, max(scroll.visible-height - self.height, scroll.visible-height - cpos.y - 20px));
+                        }
+                    }
+                }
+            }
+
+            if root.text == "" : Text {
+                x: 0px;
+                y: 2px;
+                text: "输入问题，Enter 发送，Shift+Enter 换行";
+                font-size: Theme.font-size-body;
+                color: Theme.muted;
+            }
+        }
+
+        // 框内底部工具条：模型选择 + 发送
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: stretch;
+
+            if root.model-options.length > 0 : DropdownSelector {
+                options: root.model-options;
+                selected-index <=> root.model-index;
+                selector-width: 220px;
+                open-up: true;
+                selection-changed(idx) => { root.model-changed(idx); }
+            }
+
+            if root.model-options.length == 0 : Text {
+                text: "未配置模型，请到「设置」添加服务商与模型";
+                font-size: Theme.font-size-small;
+                color: Theme.muted;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+
+            if root.model-options.length > 0 : Rectangle { horizontal-stretch: 1; }
+
+            ActionButton {
+                // 生成中变为「停止」按钮
+                text: root.pending ? "■" : "➤";
+                is-primary: true;
+                min-btn-width: 48px;
+                enabled: root.pending || root.text != "";
+                clicked => { root.send-clicked(); }
+            }
+        }
+    }
 }
 
 export component RunnerWindow inherits Window {
@@ -34,6 +171,8 @@ export component RunnerWindow inherits Window {
     in-out property <bool> resizable: true;
     in-out property <bool> show-expand-button: true;
     in-out property <bool> is-expanded: false;
+    // 窗口整体不透明度（1.0 = 不透明），宿主启动时从偏好文件读入
+    in-out property <float> window-opacity: 1.0;
     // Window Management Callbacks
     callback close-clicked();
     callback expand-clicked();
@@ -130,9 +269,17 @@ export component RunnerWindow inherits Window {
     // -------------------------------------------------------------------------
     in-out property <string> settings-baidu-appid: "";
     in-out property <string> settings-baidu-key: "";
-    in-out property <string> settings-ai-base-url: "";
-    in-out property <string> settings-ai-api-key: "";
-    in-out property <string> settings-ai-model: "";
+    // AI 多服务商列表（结构化编辑，自动保存）
+    in-out property <[AiProviderItem]> ai-providers: [];
+    in-out property <float> settings-opacity-percent: 100;
+    in-out property <bool> settings-autosave-visible: false;
+    callback opacity-changed(float);
+    callback ai-provider-added();
+    callback ai-provider-removed(string);
+    callback ai-provider-field-changed(string, string, string);
+    callback ai-model-added(string);
+    callback ai-model-removed(string, string);
+    callback ai-new-model-changed(string, string);
 
     // -------------------------------------------------------------------------
     // AI Plugin State & Callbacks
@@ -142,11 +289,17 @@ export component RunnerWindow inherits Window {
     in-out property <bool> ai-pending: false;
     in-out property <string> ai-error: "";
     in-out property <string> ai-status: "";
+    in-out property <[string]> ai-model-options: [];
+    in-out property <int> ai-model-index: 0;
+    // 流式生成中：当前已收到的完整回答文本（宿主后台线程增量回填）
+    in-out property <string> ai-stream-text: "";
 
     callback ai-send();
     callback ai-clear();
     callback ai-copy();
     callback ai-input-edited(string);
+    callback ai-model-changed(int);
+    callback ai-copy-code(string);
 
     // -------------------------------------------------------------------------
     // Generic Plugin Fallback State
@@ -183,6 +336,7 @@ export component RunnerWindow inherits Window {
         ToolShell {
             width: 100%;
             height: 100%;
+            opacity: root.window-opacity;
             title: root.window-title;
             icon: root.window-icon;
             resizable: root.resizable;
@@ -735,6 +889,11 @@ export component RunnerWindow inherits Window {
                     changed observed-messages => {
                         chat-list.viewport-y = Math.min(0px, chat-list.visible-height - chat-list.viewport-height);
                     }
+                    // 流式输出时跟随滚动
+                    property <string> observed-stream: root.ai-stream-text;
+                    changed observed-stream => {
+                        chat-list.viewport-y = Math.min(0px, chat-list.visible-height - chat-list.viewport-height);
+                    }
 
                     chat-list := ListView {
                         width: 100%;
@@ -750,7 +909,7 @@ export component RunnerWindow inherits Window {
                             if msg.role == 0 : Rectangle { horizontal-stretch: 1; }
 
                             Rectangle {
-                                max-width: chat-list.width * 0.8;
+                                max-width: chat-list.width * 0.85;
                                 border-radius: 10px;
                                 background: msg.role == 0 ? Theme.primary : Theme.card-bg;
 
@@ -760,12 +919,123 @@ export component RunnerWindow inherits Window {
                                     padding-top: 7px;
                                     padding-bottom: 7px;
 
-                                    Text {
-                                        text: msg.content;
-                                        font-size: Theme.font-size-body;
-                                        color: msg.role == 0 ? Theme.primary-fg : Theme.foreground;
-                                        wrap: word-wrap;
-                                        vertical-alignment: center;
+                                    VerticalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+
+                                        // 无分段（空内容=思考中占位）
+                                        if msg.segments.length == 0 : Text {
+                                            text: msg.content == "" ? "正在思考…" : msg.content;
+                                            font-size: Theme.font-size-body;
+                                            font-italic: msg.content == "";
+                                            color: msg.role == 0 ? Theme.primary-fg
+                                                : (msg.content == "" ? Theme.muted : Theme.foreground);
+                                            wrap: word-wrap;
+                                        }
+
+                                        for seg in msg.segments : VerticalLayout {
+                                            spacing: 0px;
+
+                                            // 普通文本段
+                                            if !seg.is-code : Text {
+                                                text: seg.text;
+                                                font-size: Theme.font-size-body;
+                                                color: msg.role == 0 ? Theme.primary-fg : Theme.foreground;
+                                                wrap: word-wrap;
+                                            }
+
+                                            // 代码段：语言标注 + 复制 + 逐 token 着色
+                                            if seg.is-code : Rectangle {
+                                                border-radius: Theme.radius-control;
+                                                background: Theme.code-bg;
+                                                border-width: 1px;
+                                                border-color: Theme.code-border;
+                                                clip: true;
+
+                                                VerticalLayout {
+                                                    spacing: 0px;
+
+                                                    HorizontalLayout {
+                                                        padding-left: 10px;
+                                                        padding-right: 6px;
+                                                        padding-top: 4px;
+                                                        padding-bottom: 2px;
+                                                        spacing: 6px;
+                                                        alignment: space-between;
+
+                                                        Text {
+                                                            text: seg.lang == "" ? "代码" : seg.lang;
+                                                            font-size: 11px;
+                                                            font-family: Theme.font-mono;
+                                                            color: Theme.muted;
+                                                            vertical-alignment: center;
+                                                        }
+
+                                                        Rectangle {
+                                                            width: 24px;
+                                                            height: 20px;
+                                                            border-radius: 4px;
+                                                            background: code-copy-touch.has-hover ? Theme.secondary-hover : Colors.transparent;
+
+                                                            Text {
+                                                                text: "📋";
+                                                                font-size: 12px;
+                                                                vertical-alignment: center;
+                                                                horizontal-alignment: center;
+                                                            }
+
+                                                            code-copy-touch := TouchArea {
+                                                                clicked => { root.ai-copy-code(seg.code); }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // 分隔线
+                                                    Rectangle {
+                                                        height: 1px;
+                                                        background: Theme.code-border;
+                                                    }
+
+                                                    ScrollView {
+                                                        // 高度随内容自适应；过长时封顶并启用内部滚动
+                                                        height: min(code-body.preferred-height, 340px);
+                                                        viewport-width: max(self.visible-width, code-body.preferred-width);
+                                                        viewport-height: code-body.preferred-height;
+
+                                                        code-body := VerticalLayout {
+                                                            padding: 8px;
+                                                            spacing: 2px;
+                                                            alignment: start;
+
+                                                            for code-line in seg.lines : HorizontalLayout {
+                                                                spacing: 0px;
+                                                                alignment: start;
+
+                                                                for tok in code-line.tokens : Text {
+                                                                    text: tok.text;
+                                                                    font-family: Theme.font-mono;
+                                                                    font-size: 13px;
+                                                                    color: tok.kind == 1 ? Theme.syntax-key
+                                                                        : tok.kind == 2 ? Theme.syntax-string
+                                                                        : tok.kind == 3 ? Theme.syntax-comment
+                                                                        : tok.kind == 4 ? Theme.syntax-number
+                                                                        : tok.kind == 5 ? Theme.syntax-boolean
+                                                                        : Theme.syntax-text;
+                                                                    vertical-alignment: center;
+                                                                }
+                                                            }
+
+                                                            // 空代码块占位
+                                                            if seg.lines.length == 0 : Text {
+                                                                text: " ";
+                                                                font-family: Theme.font-mono;
+                                                                font-size: 13px;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -774,11 +1044,11 @@ export component RunnerWindow inherits Window {
                         }
                     }
 
-                    if root.ai-messages.length == 0 : Text {
+                    if root.ai-messages.length == 0 && !root.ai-pending : Text {
                         x: 14px;
                         width: parent.width - 28px;
                         y: (parent.height - self.preferred-height) / 2;
-                        text: "输入问题后点击「发送」\n开始新的 AI 对话";
+                        text: "输入问题后按 Enter 或点击「发送」\n开始新的 AI 对话";
                         font-size: Theme.font-size-small;
                         color: Theme.muted;
                         horizontal-alignment: center;
@@ -799,147 +1069,318 @@ export component RunnerWindow inherits Window {
                     }
                 }
 
-                // Input Bar: draft input + send button
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: stretch;
-
-                    MultilineEditor {
-                        text <=> root.ai-input;
-                        min-height: 64px;
-                        vertical-stretch: 0;
-                        edited(t) => { root.ai-input-edited(t); }
-                    }
-
-                    ActionButton {
-                        text: root.ai-pending ? "回答中…" : "🚀 发送";
-                        is-primary: true;
-                        min-btn-width: 84px;
-                        enabled: !root.ai-pending && root.ai-input != "";
-                        clicked => { root.ai-send(); }
-                    }
+                // Input Bar: 框内底部「模型选择 + 发送」
+                ChatComposer {
+                    text <=> root.ai-input;
+                    model-options: root.ai-model-options;
+                    model-index <=> root.ai-model-index;
+                    pending: root.ai-pending;
+                    edited(t) => { root.ai-input-edited(t); }
+                    send-clicked() => { root.ai-send(); }
+                    model-changed(idx) => { root.ai-model-changed(idx); }
                 }
             }
 
             // =================================================================
             // 5. HOST SETTINGS VIEW (tray → 设置)
             // =================================================================
-            if root.plugin-kind == "settings" : VerticalLayout {
-                spacing: 12px;
-                alignment: stretch;
+            if root.plugin-kind == "settings" : Rectangle {
                 vertical-stretch: 1;
 
-                // 百度翻译 API Card
-                Rectangle {
-                    border-radius: Theme.radius-control;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    background: Theme.card-bg;
+                ScrollView {
+                    width: 100%;
+                    height: 100%;
+                    viewport-width: self.visible-width;
 
                     VerticalLayout {
-                        padding: 12px;
-                        spacing: 8px;
+                        spacing: 12px;
 
-                        HorizontalLayout {
-                            alignment: space-between;
-                            Text {
-                                text: "🔑 百度翻译 API (fanyi-api.baidu.com)";
-                                font-size: Theme.font-size-small;
-                                font-weight: 600;
-                                color: Theme.foreground;
-                                vertical-alignment: center;
+                        // 百度翻译 API Card
+                        Rectangle {
+                            border-radius: Theme.radius-control;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            background: Theme.card-bg;
+
+                            VerticalLayout {
+                                padding: 12px;
+                                spacing: 8px;
+
+                                Text {
+                                    text: "🔑 百度翻译 API (fanyi-api.baidu.com)";
+                                    font-size: Theme.font-size-small;
+                                    font-weight: 600;
+                                    color: Theme.foreground;
+                                    vertical-alignment: center;
+                                }
+
+                                Text {
+                                    text: "前往百度翻译开放平台申请开发者 AppID 与密钥，配置后可在「智能翻译」中选择百度引擎";
+                                    font-size: Theme.font-size-small;
+                                    color: Theme.muted;
+                                    wrap: word-wrap;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: stretch;
+                                    ValueInput {
+                                        placeholder: "App ID";
+                                        text <=> root.settings-baidu-appid;
+                                        horizontal-stretch: 1;
+                                        edited(t) => { root.input-changed("settings_baidu_appid", t); }
+                                    }
+                                    ValueInput {
+                                        placeholder: "密钥 (Secret Key)";
+                                        text <=> root.settings-baidu-key;
+                                        horizontal-stretch: 1;
+                                        edited(t) => { root.input-changed("settings_baidu_key", t); }
+                                    }
+                                }
                             }
                         }
 
-                        Text {
-                            text: "前往百度翻译开放平台申请开发者 AppID 与密钥，配置后可在「智能翻译」中选择百度引擎";
-                            font-size: Theme.font-size-small;
-                            color: Theme.muted;
-                            wrap: word-wrap;
+                        // AI Service Card（多服务商 / 多模型）
+                        Rectangle {
+                            border-radius: Theme.radius-control;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            background: Theme.card-bg;
+
+                            VerticalLayout {
+                                padding: 12px;
+                                spacing: 8px;
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: stretch;
+
+                                    VerticalLayout {
+                                        spacing: 8px;
+                                        horizontal-stretch: 1;
+
+                                        Text {
+                                            text: "🤖 AI 服务（OpenAI 兼容接口）";
+                                            font-size: Theme.font-size-small;
+                                            font-weight: 600;
+                                            color: Theme.foreground;
+                                            vertical-alignment: center;
+                                        }
+
+                                        Text {
+                                            text: "可添加多个服务商，每个服务商可配置多个模型；在「AI 问答」输入框底部可切换模型";
+                                            font-size: Theme.font-size-small;
+                                            color: Theme.muted;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+
+                                    ActionButton {
+                                        text: "＋ 添加服务商";
+                                        is-primary: true;
+                                        clicked => { root.ai-provider-added(); }
+                                    }
+                                }
+
+                                if root.ai-providers.length == 0 : Text {
+                                    text: "还没有服务商，点击右上角「＋ 添加服务商」开始配置";
+                                    font-size: Theme.font-size-small;
+                                    color: Theme.muted;
+                                }
+
+                                for p in root.ai-providers : Rectangle {
+                                    border-radius: Theme.radius-control;
+                                    border-width: 1px;
+                                    border-color: Theme.border;
+                                    background: Theme.secondary;
+
+                                    VerticalLayout {
+                                        padding: 10px;
+                                        spacing: 8px;
+
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: stretch;
+
+                                            ValueInput {
+                                                placeholder: "服务商名称";
+                                                text: p.name;
+                                                horizontal-stretch: 1;
+                                                edited(t) => { root.ai-provider-field-changed(p.id, "name", t); }
+                                            }
+                                            ValueInput {
+                                                placeholder: "接口地址 (Base URL)";
+                                                text: p.base-url;
+                                                horizontal-stretch: 2;
+                                                edited(t) => { root.ai-provider-field-changed(p.id, "base_url", t); }
+                                            }
+                                            ValueInput {
+                                                placeholder: "API Key";
+                                                text: p.api-key;
+                                                horizontal-stretch: 2;
+                                                edited(t) => { root.ai-provider-field-changed(p.id, "api_key", t); }
+                                            }
+                                            IconButton {
+                                                icon: "🗑";
+                                                clicked => { root.ai-provider-removed(p.id); }
+                                            }
+                                        }
+
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: stretch;
+
+                                            Text {
+                                                text: "模型";
+                                                font-size: Theme.font-size-small;
+                                                color: Theme.muted;
+                                                vertical-alignment: center;
+                                            }
+
+                                            // 模型 chips（过多时横向滚动）
+                                            ScrollView {
+                                                horizontal-stretch: 1;
+                                                height: 30px;
+                                                viewport-width: max(self.visible-width, chips-row.preferred-width);
+
+                                                chips-row := HorizontalLayout {
+                                                    spacing: 6px;
+                                                    alignment: start;
+
+                                                    for m in p.models : Rectangle {
+                                                        height: 26px;
+                                                        border-radius: 13px;
+                                                        background: Theme.card-bg;
+                                                        border-width: 1px;
+                                                        border-color: Theme.border;
+
+                                                        HorizontalLayout {
+                                                            padding-left: 10px;
+                                                            padding-right: 4px;
+                                                            spacing: 4px;
+                                                            alignment: center;
+
+                                                            Text {
+                                                                text: m;
+                                                                font-size: Theme.font-size-small;
+                                                                font-family: Theme.font-mono;
+                                                                color: Theme.foreground;
+                                                                vertical-alignment: center;
+                                                            }
+
+                                                            Rectangle {
+                                                                width: 18px;
+                                                                height: 18px;
+                                                                border-radius: 9px;
+                                                                background: chip-touch.has-hover ? Theme.error-bg : Colors.transparent;
+
+                                                                Text {
+                                                                    text: "×";
+                                                                    font-size: Theme.font-size-body;
+                                                                    font-weight: 600;
+                                                                    color: chip-touch.has-hover ? Theme.error-fg : Theme.muted;
+                                                                    vertical-alignment: center;
+                                                                    horizontal-alignment: center;
+                                                                }
+
+                                                                chip-touch := TouchArea {
+                                                                    clicked => { root.ai-model-removed(p.id, m); }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            ValueInput {
+                                                placeholder: "模型名";
+                                                width: 150px;
+                                                edited(t) => { root.ai-new-model-changed(p.id, t); }
+                                                accepted(t) => { root.ai-model-added(p.id); }
+                                            }
+
+                                            ActionButton {
+                                                text: "＋";
+                                                min-btn-width: 36px;
+                                                clicked => { root.ai-model-added(p.id); }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Window Appearance Card
+                        Rectangle {
+                            border-radius: Theme.radius-control;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            background: Theme.card-bg;
+
+                            VerticalLayout {
+                                padding: 12px;
+                                spacing: 8px;
+
+                                Text {
+                                    text: "🪟 窗口外观";
+                                    font-size: Theme.font-size-small;
+                                    font-weight: 600;
+                                    color: Theme.foreground;
+                                    vertical-alignment: center;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    Text {
+                                        text: "窗口透明度";
+                                        font-size: Theme.font-size-small;
+                                        color: Theme.muted;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Slider {
+                                        minimum: 30;
+                                        maximum: 100;
+                                        step: 5;
+                                        value <=> root.settings-opacity-percent;
+                                        horizontal-stretch: 1;
+                                        changed(value) => {
+                                            root.window-opacity = value / 100;
+                                            root.opacity-changed(value);
+                                        }
+                                    }
+
+                                    Text {
+                                        text: Math.floor(root.settings-opacity-percent + 0.5) + "%";
+                                        min-width: 44px;
+                                        font-size: Theme.font-size-small;
+                                        font-weight: 600;
+                                        font-family: Theme.font-mono;
+                                        color: Theme.foreground;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: right;
+                                    }
+                                }
+                            }
                         }
 
                         HorizontalLayout {
                             spacing: 8px;
-                            alignment: stretch;
-                            ValueInput {
-                                placeholder: "App ID";
-                                text <=> root.settings-baidu-appid;
-                                horizontal-stretch: 1;
-                            }
-                            ValueInput {
-                                placeholder: "密钥 (Secret Key)";
-                                text <=> root.settings-baidu-key;
-                                horizontal-stretch: 1;
-                            }
-                            ActionButton {
-                                text: "保存";
-                                is-primary: true;
-                                clicked => { root.button-clicked("btn_save_baidu"); }
-                            }
-                        }
-                    }
-                }
-
-                // AI Service Card
-                Rectangle {
-                    border-radius: Theme.radius-control;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    background: Theme.card-bg;
-
-                    VerticalLayout {
-                        padding: 12px;
-                        spacing: 8px;
-
-                        HorizontalLayout {
-                            alignment: space-between;
-                            Text {
-                                text: "🤖 AI 服务（OpenAI 兼容接口）";
+                            if root.settings-autosave-visible : Text {
+                                text: "✓ 已自动保存";
                                 font-size: Theme.font-size-small;
                                 font-weight: 600;
-                                color: Theme.foreground;
+                                color: Theme.success;
                                 vertical-alignment: center;
                             }
-                        }
 
-                        Text {
-                            text: "兼容 OpenAI 格式的接口均可（DeepSeek、GLM、Kimi 等），配置后供「AI 问答」使用";
-                            font-size: Theme.font-size-small;
-                            color: Theme.muted;
-                            wrap: word-wrap;
-                        }
+                            Rectangle { horizontal-stretch: 1; }
 
-                        HorizontalLayout {
-                            spacing: 8px;
-                            alignment: stretch;
-                            ValueInput {
-                                placeholder: "接口地址 (Base URL)";
-                                text <=> root.settings-ai-base-url;
-                                horizontal-stretch: 2;
-                            }
-                            ValueInput {
-                                placeholder: "API Key";
-                                text <=> root.settings-ai-api-key;
-                                horizontal-stretch: 1;
-                            }
-                            ValueInput {
-                                placeholder: "模型 (Model)";
-                                text <=> root.settings-ai-model;
-                                horizontal-stretch: 1;
-                            }
-                            ActionButton {
-                                text: "保存";
-                                is-primary: true;
-                                clicked => { root.button-clicked("btn_save_ai"); }
+                            InlineNote {
+                                text: "输入后自动保存，重新打开对应工具生效";
                             }
                         }
                     }
-                }
-
-                Rectangle { horizontal-stretch: 1; }
-
-                InlineNote {
-                    text: "配置保存后，重新打开对应工具即可生效";
                 }
             }
 

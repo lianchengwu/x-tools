@@ -17,6 +17,17 @@ pub enum UiEvent {
     TabChanged { id: String, index: usize, tab_id: String },
     /// JSON Tree node expand/collapse toggle event
     JsonTreeToggle { id: String, node_id: usize },
+    /// 异步请求完成回调：宿主后台线程执行完 AI 请求后回填给插件。
+    /// error 非 None 表示请求失败（插件应回滚用户消息）；aborted 表示用户主动停止，
+    /// content 为已生成的部分内容。
+    AssistantDone {
+        #[serde(default)]
+        content: String,
+        #[serde(default)]
+        error: Option<String>,
+        #[serde(default)]
+        aborted: bool,
+    },
     /// Periodic timer tick event (for clock updates, etc.)
     TimerTick,
     /// Window opened or gained focus

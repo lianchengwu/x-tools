@@ -188,29 +188,19 @@ fn test_trans_plugin_lifecycle_and_storage() {
     let view = instance.render().expect("Failed to render trans view");
     assert!(matches!(view.root, UiNode::Container { .. }));
 
-    // 2. Set Baidu config
-    let _ = instance.handle_event(&UiEvent::InputChanged {
-        id: "cfg_baidu_appid".to_string(),
-        value: "test_appid_123".to_string(),
-    }).expect("Failed to input appid");
-
-    let _ = instance.handle_event(&UiEvent::InputChanged {
-        id: "cfg_baidu_key".to_string(),
-        value: "test_key_456".to_string(),
-    }).expect("Failed to input key");
-
-    // 3. Save config
-    let save_resp = instance.handle_event(&UiEvent::Click {
-        id: "btn_save_config".to_string(),
-    }).expect("Failed to save config");
-    assert!(matches!(save_resp, UiResponse::ShowToast(..)));
+    // 2. 切换引擎触发插件持久化（AppID/密钥配置已移至宿主设置窗口）
+    let select_resp = instance.handle_event(&UiEvent::SelectChanged {
+        id: "select_engine".to_string(),
+        index: 1, // 百度翻译
+        value: "1".to_string(),
+    }).expect("Failed to select engine");
+    assert!(matches!(select_resp, UiResponse::UpdateView(..)));
 
     // Verify storage file created by host capability
     let config_file = temp_dir.join("xtools.trans").join("config.json");
     assert!(config_file.exists(), "Expected config file to be written by host storage API");
     let content = std::fs::read_to_string(&config_file).unwrap();
-    assert!(content.contains("test_appid_123"));
-    assert!(content.contains("test_key_456"));
+    assert!(content.contains("engine_index"), "engine_index should be persisted: {content}");
 
     // 4. Test language swap
     let _ = instance.handle_event(&UiEvent::SelectChanged {
@@ -234,5 +224,224 @@ fn test_trans_plugin_lifecycle_and_storage() {
     assert!(matches!(swap_resp, UiResponse::UpdateView(..)));
 
     // Cleanup
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+// -----------------------------------------------------------------------------
+// AI 插件端到端验证：阶段 A（用户消息立即入列）+ 宿主 AssistantDone 回填流程
+// 注意：实际 HTTP 请求由宿主后台线程执行（见 xtools-host/src/ai_runtime.rs），
+// 插件侧不再发起网络请求，因此这里用 AssistantDone 事件模拟宿主回填。
+// -----------------------------------------------------------------------------
+
+fn collect_chat_messages(node: &UiNode, out: &mut Vec<(usize, String)>) {
+    match node {
+        UiNode::Container { children, .. } | UiNode::Card { children, .. } => {
+            for child in children {
+                collect_chat_messages(child, out);
+            }
+        }
+        UiNode::Chat { messages, .. } => {
+            for m in messages {
+                out.push((m.role as usize, m.content.clone()));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn find_ai_error(node: &UiNode, out: &mut Vec<String>) {
+    match node {
+        UiNode::Container { children, .. } | UiNode::Card { children, .. } => {
+            for child in children {
+                find_ai_error(child, out);
+            }
+        }
+        UiNode::Label { text, variant, .. } => {
+            if *variant == LabelVariant::Error {
+                out.push(text.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_drafts(node: &UiNode, out: &mut Vec<String>) {
+    match node {
+        UiNode::Container { children, .. } | UiNode::Card { children, .. } => {
+            for child in children {
+                collect_drafts(child, out);
+            }
+        }
+        UiNode::TextInput { id, value, .. } => {
+            if id == "input_draft" {
+                out.push(value.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn load_ai_instance() -> Option<(xtools_runtime::PluginInstance, PathBuf)> {
+    let Some(path) = require_plugin_artifact("test_ai_plugin_flow", "ai") else {
+        return None;
+    };
+    let temp_dir = std::env::temp_dir().join(format!("xtools-ai-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Some((PluginLoader::new().with_storage_root(temp_dir.clone()).load_instance(&path).expect("load ai plugin"), temp_dir))
+}
+
+/// 写入多服务商配置（新格式）
+fn seed_ai_config(temp_dir: &PathBuf, selected_model: &str) {
+    let cfg_dir = temp_dir.join("xtools.ai");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    std::fs::write(
+        cfg_dir.join("config.json"),
+        r#"{"providers":[{"id":"p1","name":"Stub","base_url":"http://127.0.0.1:9/v1","api_key":"sk-stub","models":["m1","m2"]}],"selected_provider_id":"p1","selected_model":"MODEL"}"#
+            .replace("MODEL", selected_model),
+    )
+    .unwrap();
+}
+
+#[test]
+fn test_ai_send_phase_a_and_assistant_done_success() {
+    let Some((mut instance, temp_dir)) = load_ai_instance() else {
+        return;
+    };
+    seed_ai_config(&temp_dir, "m1");
+    instance.init().expect("init ai plugin");
+
+    // 阶段 A：发送后用户消息立即入列、草稿清空、无错误（不产生任何网络请求）
+    instance.handle_event(&UiEvent::InputChanged {
+        id: "input_draft".to_string(),
+        value: "你好".to_string(),
+    }).expect("input draft");
+    let resp = instance.handle_event(&UiEvent::Click { id: "btn_send".to_string() }).unwrap();
+    let UiResponse::UpdateView(view) = resp else {
+        panic!("expected UpdateView after send");
+    };
+    let mut msgs = Vec::new();
+    collect_chat_messages(&view.root, &mut msgs);
+    assert_eq!(msgs.len(), 1, "phase A should only append the user message: {msgs:?}");
+    assert_eq!(msgs[0].0, 0);
+    assert_eq!(msgs[0].1, "你好");
+    let mut drafts = Vec::new();
+    collect_drafts(&view.root, &mut drafts);
+    assert_eq!(drafts.first().map(String::as_str), Some(""));
+    let mut errors = Vec::new();
+    find_ai_error(&view.root, &mut errors);
+    assert!(errors.is_empty(), "{errors:?}");
+
+    // 宿主回填：追加助手回答
+    let resp = instance.handle_event(&UiEvent::AssistantDone {
+        content: "这是回答".to_string(),
+        error: None,
+        aborted: false,
+    }).unwrap();
+    let UiResponse::UpdateView(view) = resp else {
+        panic!("expected UpdateView after done");
+    };
+    let mut msgs = Vec::new();
+    collect_chat_messages(&view.root, &mut msgs);
+    assert_eq!(msgs.len(), 2);
+    assert_eq!(msgs[1].0, 1);
+    assert_eq!(msgs[1].1, "这是回答");
+
+    // 会话已持久化（供下次打开恢复）
+    let history = std::fs::read_to_string(temp_dir.join("xtools.ai").join("history.json")).unwrap();
+    assert!(history.contains("这是回答"), "{history}");
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_ai_assistant_done_error_rolls_back() {
+    let Some((mut instance, temp_dir)) = load_ai_instance() else {
+        return;
+    };
+    seed_ai_config(&temp_dir, "m1");
+    instance.init().expect("init ai plugin");
+
+    instance.handle_event(&UiEvent::InputChanged {
+        id: "input_draft".to_string(),
+        value: "你好".to_string(),
+    }).unwrap();
+    instance.handle_event(&UiEvent::Click { id: "btn_send".to_string() }).unwrap();
+
+    // 失败回填：用户消息回滚到草稿，展示错误
+    let resp = instance.handle_event(&UiEvent::AssistantDone {
+        content: String::new(),
+        error: Some("AI 接口返回 HTTP 401: Invalid API key".to_string()),
+        aborted: false,
+    }).unwrap();
+    let UiResponse::UpdateView(view) = resp else {
+        panic!("expected UpdateView");
+    };
+    let mut msgs = Vec::new();
+    collect_chat_messages(&view.root, &mut msgs);
+    assert!(msgs.is_empty(), "failed send should roll back: {msgs:?}");
+    let mut drafts = Vec::new();
+    collect_drafts(&view.root, &mut drafts);
+    assert_eq!(drafts.first().map(String::as_str), Some("你好"));
+    let mut errors = Vec::new();
+    find_ai_error(&view.root, &mut errors);
+    assert!(errors.iter().any(|e| e.contains("401")), "{errors:?}");
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_ai_assistant_done_stale_is_ignored() {
+    let Some((mut instance, temp_dir)) = load_ai_instance() else {
+        return;
+    };
+    seed_ai_config(&temp_dir, "m1");
+    instance.init().expect("init ai plugin");
+
+    instance.handle_event(&UiEvent::InputChanged {
+        id: "input_draft".to_string(),
+        value: "你好".to_string(),
+    }).unwrap();
+    instance.handle_event(&UiEvent::Click { id: "btn_send".to_string() }).unwrap();
+    // 请求期间清空对话，迟到的结果应被丢弃
+    instance.handle_event(&UiEvent::Click { id: "btn_clear".to_string() }).unwrap();
+    instance.handle_event(&UiEvent::AssistantDone {
+        content: "迟到的回答".to_string(),
+        error: None,
+        aborted: false,
+    }).unwrap();
+
+    let view = instance.render().unwrap();
+    let mut msgs = Vec::new();
+    collect_chat_messages(&view.root, &mut msgs);
+    assert!(msgs.is_empty(), "stale result must be dropped: {msgs:?}");
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_ai_assistant_done_abort_keeps_partial() {
+    let Some((mut instance, temp_dir)) = load_ai_instance() else {
+        return;
+    };
+    seed_ai_config(&temp_dir, "m1");
+    instance.init().expect("init ai plugin");
+
+    instance.handle_event(&UiEvent::InputChanged {
+        id: "input_draft".to_string(),
+        value: "写首诗".to_string(),
+    }).unwrap();
+    instance.handle_event(&UiEvent::Click { id: "btn_send".to_string() }).unwrap();
+    instance.handle_event(&UiEvent::AssistantDone {
+        content: "春天来了".to_string(),
+        error: None,
+        aborted: true,
+    }).unwrap();
+
+    let view = instance.render().unwrap();
+    let mut msgs = Vec::new();
+    collect_chat_messages(&view.root, &mut msgs);
+    assert_eq!(msgs.len(), 2);
+    assert_eq!(msgs[1].1, "春天来了");
+
     let _ = std::fs::remove_dir_all(&temp_dir);
 }

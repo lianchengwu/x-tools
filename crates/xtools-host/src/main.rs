@@ -1,7 +1,11 @@
+mod ai_config;
+mod ai_highlight;
+mod ai_runtime;
 mod anim;
 mod layout;
 mod runner;
 mod settings_window;
+mod window_prefs;
 
 #[cfg(unix)]
 mod paint;

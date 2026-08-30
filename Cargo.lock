@@ -7505,6 +7505,7 @@ dependencies = [
  "slint",
  "slint-build",
  "tiny-skia 0.12.0",
+ "ureq",
  "usvg",
  "wasmtime",
  "windows-sys 0.61.2",

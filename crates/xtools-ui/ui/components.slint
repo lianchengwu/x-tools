@@ -145,33 +145,35 @@ export component ValueInput inherits Rectangle {
         clicked => { input.focus(); }
     }
 
-    HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 10px;
+    // 绝对定位 + 固定占满：宽度只由父级布局决定，不随输入内容增长
+    if root.text == "" && root.placeholder != "" && !input.has-focus : Text {
+        x: 10px;
+        width: parent.width - 20px;
+        text: root.placeholder;
+        font-size: Theme.font-size-body;
+        font-family: Theme.font-mono;
+        color: Theme.muted;
+        vertical-alignment: center;
+        overflow: elide;
+    }
 
-        if root.text == "" && root.placeholder != "" && !input.has-focus : Text {
-            text: root.placeholder;
-            font-size: Theme.font-size-body;
-            font-family: Theme.font-mono;
-            color: Theme.muted;
-            vertical-alignment: center;
-        }
+    input := TextInput {
+        x: 10px;
+        width: parent.width - 20px;
+        height: parent.height;
+        text <=> root.text;
+        enabled: root.enabled;
+        read-only: root.read-only;
+        font-size: Theme.font-size-body;
+        font-family: Theme.font-mono;
+        color: Theme.foreground;
+        selection-background-color: Theme.selection;
+        selection-foreground-color: Theme.foreground;
+        vertical-alignment: center;
+        single-line: true;
 
-        input := TextInput {
-            text <=> root.text;
-            enabled: root.enabled;
-            read-only: root.read-only;
-            font-size: Theme.font-size-body;
-            font-family: Theme.font-mono;
-            color: Theme.foreground;
-            selection-background-color: Theme.selection;
-            selection-foreground-color: Theme.foreground;
-            vertical-alignment: center;
-            single-line: true;
-
-            edited => { root.edited(self.text); }
-            accepted => { root.accepted(self.text); }
-        }
+        edited => { root.edited(self.text); }
+        accepted => { root.accepted(self.text); }
     }
 }
 
@@ -226,7 +228,10 @@ export component MultilineEditor inherits Rectangle {
     in-out property <string> text;
     in property <bool> enabled: true;
     in property <bool> read-only: false;
+    // 为 true 时按 Enter 触发 accepted（Shift+Enter 仍换行）；默认关闭，Enter 正常换行
+    in property <bool> enter-sends: false;
     callback edited(string);
+    callback accepted(string);
 
     border-radius: Theme.radius-control;
     border-width: editor.has-focus ? 1.5px : 1px;
@@ -244,6 +249,14 @@ export component MultilineEditor inherits Rectangle {
             font-size: Theme.font-size-body;
             font-family: Theme.font-mono;
             edited => { root.edited(self.text); }
+            key-pressed(event) => {
+                if (root.enter-sends && event.text == "\n" && !event.modifiers.shift) {
+                    root.accepted(self.text);
+                    accept
+                } else {
+                    reject
+                }
+            }
         }
     }
 }
@@ -347,6 +360,8 @@ export component DropdownSelector inherits Rectangle {
     in property <[string]> options;
     in-out property <int> selected-index: 0;
     in property <length> selector-width: 112px;
+    // 为 true 时下拉列表向上弹出（用于靠近窗口底部的场景）
+    in property <bool> open-up: false;
     callback selection-changed(int);
 
     width: root.selector-width;
@@ -399,7 +414,9 @@ export component DropdownSelector inherits Rectangle {
 
     popup := PopupWindow {
         x: 0px;
-        y: root.height + 4px;
+        y: root.open-up
+            ? -(min(260px, max(68px, root.options.length * 32px + 10px))) - 4px
+            : root.height + 4px;
         width: root.width;
         height: min(260px, max(68px, root.options.length * 32px + 10px));
 

@@ -45,9 +45,14 @@ export global Theme {
     out property <color> syntax-key: dark ? #93C5FD : #1E40AF;
     out property <color> syntax-string: dark ? #34D399 : #059669;
     out property <color> syntax-number: dark ? #FBBF24 : #D97706;
-    out property <color> syntax-boolean: dark ? #FB923C : #EA580C;
+    out property <color> syntax-boolean: dark ? #F87171 : #DC2626;
     out property <color> syntax-null: dark ? #737373 : #94A3B8;
     out property <color> syntax-text: dark ? #D4D4D4 : #334155;
+    // 代码注释（AI 回答代码块高亮）
+    out property <color> syntax-comment: dark ? #6B7280 : #94A3B8;
+    // 代码块背景（略深于卡片底色）
+    out property <color> code-bg: dark ? #1C1C1C : #F1F5F9;
+    out property <color> code-border: dark ? #333333 : #E2E8F0;
 
     // Drop shadow for popups (stronger in dark to stay visible)
     out property <color> drop-shadow: dark ? #00000066 : #0000001E;
