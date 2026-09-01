@@ -347,6 +347,7 @@ fn launch_plugin(plugin: &DiscoveredPlugin) {
 
     if raise_instance(&instance_name, None).unwrap_or(false) {
         log::info!("Raised existing window for {}", instance_name);
+        xtools_ui::kwin::raise_window(0, Some(&plugin.manifest.name));
         return;
     }
     let self_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("xtools"));

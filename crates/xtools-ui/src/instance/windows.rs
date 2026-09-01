@@ -187,7 +187,10 @@ fn send(name: &str, bytes: &[u8]) -> io::Result<bool> {
         }
         offset += written as usize;
     }
-    unsafe { CloseHandle(handle) };
+    unsafe {
+        windows_sys::Win32::Storage::FileSystem::FlushFileBuffers(handle);
+        CloseHandle(handle);
+    }
     Ok(true)
 }
 
@@ -196,6 +199,11 @@ pub fn terminate_instance(name: &str) -> io::Result<bool> {
 }
 
 pub fn raise_instance(name: &str, token: Option<&str>) -> io::Result<bool> {
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(
+            windows_sys::Win32::UI::WindowsAndMessaging::ASFW_ANY,
+        );
+    }
     let line = match token {
         Some(t)
             if !t.is_empty()
@@ -256,16 +264,24 @@ pub fn accept_command(listener: &InstanceListener) -> Option<super::InstanceComm
         if read_ok != 0 && read > 0 {
             inner.pending.extend_from_slice(&buf[..read as usize]);
         }
-    } else if peek_ok == 0 {
-        let code = unsafe { GetLastError() };
-        if inner.connected
-            && (code == ERROR_BROKEN_PIPE
-                || code == ERROR_PIPE_NOT_CONNECTED
-                || code == ERROR_NO_DATA)
-        {
-            if inner.pending.is_empty() {
-                reset_connection(&mut inner);
-                return None;
+    } else {
+        // If peek failed (e.g. client already disconnected with ERROR_BROKEN_PIPE) or available == 0,
+        // try draining any buffered bytes via ReadFile before resetting.
+        let remaining = MAX_COMMAND_SIZE.saturating_sub(inner.pending.len());
+        if remaining > 0 {
+            let mut buf = [0u8; MAX_COMMAND_SIZE];
+            let mut read = 0;
+            let read_ok = unsafe {
+                ReadFile(
+                    inner.handle,
+                    buf.as_mut_ptr(),
+                    remaining as u32,
+                    &mut read,
+                    std::ptr::null_mut(),
+                )
+            };
+            if read_ok != 0 && read > 0 {
+                inner.pending.extend_from_slice(&buf[..read as usize]);
             }
         }
     }

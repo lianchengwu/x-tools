@@ -599,6 +599,11 @@ fn get_window_dpi(hwnd: HWND) -> u32 {
 
 /// 已有窗口则拉起，否则用自身二进制 `xtools run <wasm>` 启动插件窗口
 fn launch_plugin(plugin: &DiscoveredPlugin) {
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(
+            windows_sys::Win32::UI::WindowsAndMessaging::ASFW_ANY,
+        );
+    }
     let instance_name = plugin.manifest.id.replace('.', "-");
     if raise_instance(&instance_name, None).unwrap_or(false) {
         log::info!("Raised existing window for {instance_name}");
@@ -623,6 +628,15 @@ fn launch_plugin(plugin: &DiscoveredPlugin) {
 
 /// 从托盘拉起独立设置窗口（独立进程，重复点击由单实例机制合并）
 fn spawn_settings_window() {
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(
+            windows_sys::Win32::UI::WindowsAndMessaging::ASFW_ANY,
+        );
+    }
+    if raise_instance("xtools-settings", None).unwrap_or(false) {
+        log::info!("Raised existing settings window");
+        return;
+    }
     let Ok(self_exe) = std::env::current_exe() else {
         return;
     };

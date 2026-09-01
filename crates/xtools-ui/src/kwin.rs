@@ -144,6 +144,86 @@ pub fn pin_self(restore: Option<&str>) {
     pin_pid(std::process::id(), restore);
 }
 
+/// Raise and activate the tool window matching `pid` or `plugin_name` via KWin on Wayland/X11.
+pub fn raise_window(pid: u32, plugin_name: Option<&str>) -> bool {
+    let script_name = format!("xtools-raise-{pid}");
+    let filter = match plugin_name {
+        Some(name) if !name.is_empty() => format!(
+            r#"w.pid === {pid} || (cls.indexOf("xtools") !== -1 && (w.caption.indexOf("{name}") !== -1 || cls.indexOf("{name}") !== -1))"#
+        ),
+        _ => format!(r#"w.pid === {pid} || (cls.indexOf("xtools") !== -1 && cls.indexOf("host") === -1)"#),
+    };
+    let script = format!(
+        r#"(function() {{
+    var wins = workspace.windowList();
+    for (var i = 0; i < wins.length; i++) {{
+        var w = wins[i];
+        var cls = "";
+        try {{ cls = String(w.resourceClass); }} catch(e) {{}}
+        if ({filter}) {{
+            w.minimized = false;
+            try {{ w.onAllDesktops = true; }} catch(e) {{}}
+            try {{ workspace.raiseWindow(w); }} catch(e) {{}}
+            workspace.activeWindow = w;
+            break;
+        }}
+    }}
+}})();
+"#
+    );
+
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map_or_else(std::env::temp_dir, std::path::PathBuf::from);
+    let path = dir.join(format!("{script_name}.js"));
+    if fs::write(&path, script).is_err() {
+        return false;
+    }
+    let loaded = Command::new("busctl")
+        .args([
+            "--user",
+            "call",
+            "org.kde.KWin",
+            "/Scripting",
+            "org.kde.kwin.Scripting",
+            "loadScript",
+            "ss",
+        ])
+        .arg(&path)
+        .arg(&script_name)
+        .output();
+
+    let _ = fs::remove_file(&path);
+
+    if let Ok(out) = loaded {
+        if out.status.success() && !String::from_utf8_lossy(&out.stdout).contains("-1") {
+            let _ = Command::new("busctl")
+                .args([
+                    "--user",
+                    "call",
+                    "org.kde.KWin",
+                    "/Scripting",
+                    "org.kde.kwin.Scripting",
+                    "start",
+                ])
+                .status();
+            let _ = Command::new("busctl")
+                .args([
+                    "--user",
+                    "call",
+                    "org.kde.KWin",
+                    "/Scripting",
+                    "org.kde.kwin.Scripting",
+                    "unloadScript",
+                    "s",
+                    &script_name,
+                ])
+                .status();
+            return true;
+        }
+    }
+    false
+}
+
 fn script_loaded() -> bool {
     let out = Command::new("busctl")
         .args([

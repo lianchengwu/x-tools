@@ -215,10 +215,63 @@ pub fn setup_raise_timer(
             Some(crate::instance::InstanceCommand::Raise(_token)) => {
                 if let Some(ui) = window.upgrade() {
                     let _ = ui.window().show();
-                    use i_slint_backend_winit::WinitWindowAccessor;
-                    ui.window().with_winit_window(|w| {
-                        w.focus_window();
-                    });
+                    #[cfg(feature = "slint-chrome")]
+                    {
+                        use i_slint_backend_winit::WinitWindowAccessor;
+                        ui.window().with_winit_window(|w| {
+                            w.set_minimized(false);
+                            w.set_visible(true);
+                            w.focus_window();
+                            w.request_user_attention(Some(i_slint_backend_winit::winit::window::UserAttentionType::Critical));
+                            #[cfg(unix)]
+                            {
+                                crate::kwin::raise_window(std::process::id(), None);
+                            }
+
+                            #[cfg(windows)]
+                            {
+                                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                                use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+                                use windows_sys::Win32::UI::WindowsAndMessaging::{
+                                    AttachThreadInput, BringWindowToTop, GetForegroundWindow,
+                                    GetWindowThreadProcessId, IsIconic, SetFocus,
+                                    SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+                                };
+
+                                if let Ok(handle) = w.window_handle() {
+                                    if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
+                                        let hwnd = win32_handle.hwnd.get() as isize
+                                            as windows_sys::Win32::Foundation::HWND;
+                                        unsafe {
+                                            if IsIconic(hwnd) != 0 {
+                                                ShowWindow(hwnd, SW_RESTORE);
+                                            } else {
+                                                ShowWindow(hwnd, SW_SHOW);
+                                            }
+                                            let foreground_hwnd = GetForegroundWindow();
+                                            let foreground_thread = GetWindowThreadProcessId(
+                                                foreground_hwnd,
+                                                std::ptr::null_mut(),
+                                            );
+                                            let current_thread = GetCurrentThreadId();
+                                            if foreground_thread != 0
+                                                && foreground_thread != current_thread
+                                            {
+                                                AttachThreadInput(foreground_thread, current_thread, 1);
+                                                BringWindowToTop(hwnd);
+                                                SetForegroundWindow(hwnd);
+                                                AttachThreadInput(foreground_thread, current_thread, 0);
+                                            } else {
+                                                BringWindowToTop(hwnd);
+                                                SetForegroundWindow(hwnd);
+                                            }
+                                            SetFocus(hwnd);
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    }
                 }
             }
             None => {}

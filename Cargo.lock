@@ -7514,6 +7514,7 @@ dependencies = [
  "libc",
  "log",
  "parking_lot",
+ "raw-window-handle",
  "slint",
  "windows-sys 0.61.2",
 ]
