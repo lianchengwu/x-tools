@@ -231,13 +231,15 @@ pub fn setup_raise_timer(
                             #[cfg(windows)]
                             {
                                 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-                                use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+                                use windows_sys::Win32::System::Threading::{
+                                    AttachThreadInput, GetCurrentThreadId,
+                                };
+                                use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
                                 use windows_sys::Win32::UI::WindowsAndMessaging::{
-                                    AttachThreadInput, BringWindowToTop, GetForegroundWindow,
-                                    GetWindowThreadProcessId, IsIconic, SetFocus,
+                                    BringWindowToTop, GetForegroundWindow,
+                                    GetWindowThreadProcessId, IsIconic,
                                     SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
                                 };
-
                                 if let Ok(handle) = w.window_handle() {
                                     if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
                                         let hwnd = win32_handle.hwnd.get() as isize
