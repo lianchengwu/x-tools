@@ -146,9 +146,9 @@ component ChatComposer inherits Rectangle {
 
             ActionButton {
                 // 生成中变为「停止」按钮
-                text: root.pending ? "■" : "➤";
+                text: root.pending ? "停止" : "发送";
                 is-primary: true;
-                min-btn-width: 38px;
+                min-btn-width: 48px;
                 btn-height: Theme.control-height * 0.8;
                 enabled: root.pending || root.text != "";
                 clicked => { root.send-clicked(); }
@@ -161,7 +161,7 @@ export component RunnerWindow inherits Window {
     title: "xtools";
     no-frame: true;
     background: Colors.transparent;
-    default-font-family: "sans-serif";
+    default-font-family: "Microsoft YaHei, Segoe UI, PingFang SC, Noto Sans CJK SC, sans-serif";
     min-width: 420px;
     min-height: 320px;
     // 全部窗口统一放大到 1.5 倍（840×780）
@@ -600,12 +600,19 @@ export component RunnerWindow inherits Window {
                                         border-radius: 3px;
                                         background: btn-touch.has-hover ? Theme.secondary-hover : Colors.transparent;
 
-                                        Text {
-                                            text: item.collapsed ? "▶" : "▼";
-                                            font-size: 10px;
-                                            color: Theme.muted;
-                                            vertical-alignment: center;
-                                            horizontal-alignment: center;
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Path {
+                                                width: 6px;
+                                                height: 6px;
+                                                commands: item.collapsed
+                                                    ? "M 1.5 0.5 L 5 3 L 1.5 5.5"
+                                                    : "M 0.5 1.5 L 3 5 L 5.5 1.5";
+                                                stroke: btn-touch.has-hover ? Theme.foreground : Theme.muted;
+                                                stroke-width: 1.4px;
+                                                stroke-line-cap: round;
+                                                stroke-line-join: round;
+                                            }
                                         }
 
                                         btn-touch := TouchArea {
@@ -997,11 +1004,17 @@ export component RunnerWindow inherits Window {
                                                             border-radius: 4px;
                                                             background: code-copy-touch.has-hover ? Theme.secondary-hover : Colors.transparent;
 
-                                                            Text {
-                                                                text: "📋";
-                                                                font-size: 12px;
-                                                                vertical-alignment: center;
-                                                                horizontal-alignment: center;
+                                                            VerticalLayout {
+                                                                alignment: center;
+                                                                Path {
+                                                                    width: 12px;
+                                                                    height: 12px;
+                                                                    commands: "M 4 2.5 L 4 1 L 10.5 1 L 10.5 7.5 L 9 7.5 M 1 3.5 L 7.5 3.5 L 7.5 10.5 L 1 10.5 Z";
+                                                                    stroke: code-copy-touch.has-hover ? Theme.foreground : Theme.muted;
+                                                                    stroke-width: 1.2px;
+                                                                    stroke-line-cap: round;
+                                                                    stroke-line-join: round;
+                                                                }
                                                             }
 
                                                             code-copy-touch := TouchArea {
@@ -1123,10 +1136,17 @@ export component RunnerWindow inherits Window {
                             spacing: 6px;
                             alignment: start;
 
-                            Text {
-                                text: "🔒";
-                                font-size: Theme.font-size-small;
-                                vertical-alignment: center;
+                            VerticalLayout {
+                                alignment: center;
+                                Path {
+                                    width: 10px;
+                                    height: 12px;
+                                    commands: "M 2.5 4.5 L 2.5 2.5 C 2.5 1.2 3.5 0.5 5 0.5 C 6.5 0.5 7.5 1.2 7.5 2.5 L 7.5 4.5 M 0.5 4.5 L 9.5 4.5 L 9.5 11.5 L 0.5 11.5 Z M 5 6.5 L 5 8.5";
+                                    stroke: Theme.muted;
+                                    stroke-width: 1.2px;
+                                    stroke-line-cap: round;
+                                    stroke-line-join: round;
+                                }
                             }
 
                             Text {
@@ -1493,12 +1513,30 @@ export component RunnerWindow inherits Window {
                 alignment: center;
                 spacing: 6px;
 
-                Text {
-                    text: root.toast-is-success ? "✓" : "⚠️";
-                    font-size: Theme.font-size-body;
-                    font-weight: 700;
-                    color: root.toast-is-success ? Theme.success : Theme.error-fg;
-                    vertical-alignment: center;
+                if root.toast-is-success : VerticalLayout {
+                    alignment: center;
+                    Path {
+                        width: 10px;
+                        height: 8px;
+                        commands: "M 1 4 L 3.5 6.5 L 9 1";
+                        stroke: Theme.success;
+                        stroke-width: 1.8px;
+                        stroke-line-cap: round;
+                        stroke-line-join: round;
+                    }
+                }
+
+                if !root.toast-is-success : VerticalLayout {
+                    alignment: center;
+                    Path {
+                        width: 13px;
+                        height: 12px;
+                        commands: "M 6.5 1 L 12.5 11.5 L 0.5 11.5 Z M 6.5 4.5 L 6.5 7.5 M 6.5 9.5 L 6.5 10";
+                        stroke: Theme.error-fg;
+                        stroke-width: 1.2px;
+                        stroke-line-cap: round;
+                        stroke-line-join: round;
+                    }
                 }
 
                 Text {

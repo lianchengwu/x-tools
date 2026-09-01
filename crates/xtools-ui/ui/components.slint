@@ -73,12 +73,17 @@ export component CopyButton inherits Rectangle {
         alignment: center;
         spacing: 4px;
 
-        if root.copied : Text {
-            text: "✓";
-            font-size: Theme.font-size-body;
-            font-weight: 700;
-            color: Theme.success;
-            vertical-alignment: center;
+        if root.copied : VerticalLayout {
+            alignment: center;
+            Path {
+                width: 10px;
+                height: 8px;
+                commands: "M 1 4 L 3.5 6.5 L 9 1";
+                stroke: Theme.success;
+                stroke-width: 1.8px;
+                stroke-line-cap: round;
+                stroke-line-join: round;
+            }
         }
 
         Text {
@@ -98,7 +103,7 @@ export component CopyButton inherits Rectangle {
 }
 
 export component IconButton inherits Rectangle {
-    in property <string> icon;
+    in property <string> icon: "";
     in property <bool> enabled: true;
     callback clicked();
 
@@ -112,7 +117,63 @@ export component IconButton inherits Rectangle {
     animate background { duration: 100ms; }
     animate border-color { duration: 100ms; }
 
-    Text {
+    property <bool> is-swap: root.icon == "⇄" || root.icon == "swap";
+    property <bool> is-plus: root.icon == "＋" || root.icon == "+" || root.icon == "plus" || root.icon == "➕";
+    property <bool> is-copy: root.icon == "📋" || root.icon == "copy";
+    property <bool> is-trash: root.icon == "🗑" || root.icon == "trash" || root.icon == "delete";
+    property <bool> is-vector: root.is-swap || root.is-plus || root.is-copy || root.is-trash;
+
+    property <color> icon-color: !root.enabled ? Theme.muted : (touch.has-hover ? Theme.foreground : Theme.foreground-soft);
+
+    if root.is-swap : Path {
+        width: 14px;
+        height: 12px;
+        x: (parent.width - 14px) / 2;
+        y: (parent.height - 12px) / 2;
+        commands: "M 2 3.5 L 12 3.5 M 8.5 1 L 12 3.5 L 8.5 6 M 12 8.5 L 2 8.5 M 5.5 6 L 2 8.5 L 5.5 11";
+        stroke: root.icon-color;
+        stroke-width: 1.5px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+    }
+
+    if root.is-plus : Path {
+        width: 12px;
+        height: 12px;
+        x: (parent.width - 12px) / 2;
+        y: (parent.height - 12px) / 2;
+        commands: "M 1 6 L 11 6 M 6 1 L 6 11";
+        stroke: root.icon-color;
+        stroke-width: 1.6px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+    }
+
+    if root.is-copy : Path {
+        width: 13px;
+        height: 13px;
+        x: (parent.width - 13px) / 2;
+        y: (parent.height - 13px) / 2;
+        commands: "M 4.5 2.5 L 4.5 1 L 11.5 1 L 11.5 8 L 10 8 M 1 4 L 8.5 4 L 8.5 11.5 L 1 11.5 Z";
+        stroke: root.icon-color;
+        stroke-width: 1.3px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+    }
+
+    if root.is-trash : Path {
+        width: 13px;
+        height: 13px;
+        x: (parent.width - 13px) / 2;
+        y: (parent.height - 13px) / 2;
+        commands: "M 1.5 3.5 L 11.5 3.5 M 4.5 3.5 L 4.5 1.5 L 8.5 1.5 L 8.5 3.5 M 2.5 3.5 L 3 11.5 L 10 11.5 L 10.5 3.5 M 5 5.5 L 5 9.5 M 8 5.5 L 8 9.5";
+        stroke: root.icon-color;
+        stroke-width: 1.2px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+    }
+
+    if !root.is-vector && root.icon != "" : Text {
         text: root.icon;
         font-size: Theme.font-size-body;
         font-weight: 600;
@@ -120,6 +181,8 @@ export component IconButton inherits Rectangle {
         vertical-alignment: center;
         horizontal-alignment: center;
     }
+
+    @children
 
     touch := TouchArea {
         enabled: root.enabled;
@@ -279,10 +342,18 @@ export component InlineError inherits Rectangle {
         spacing: 8px;
         alignment: start;
 
-        Text {
-            text: "⚠️";
-            font-size: Theme.font-size-small;
-            vertical-alignment: top;
+        VerticalLayout {
+            alignment: start;
+            padding-top: 2px;
+            Path {
+                width: 13px;
+                height: 12px;
+                commands: "M 6.5 1 L 12.5 11.5 L 0.5 11.5 Z M 6.5 4.5 L 6.5 7.5 M 6.5 9.5 L 6.5 10";
+                stroke: Theme.error-fg;
+                stroke-width: 1.2px;
+                stroke-line-cap: round;
+                stroke-line-join: round;
+            }
         }
 
         Text {
@@ -403,11 +474,18 @@ export component DropdownSelector inherits Rectangle {
             overflow: elide;
         }
 
-        Text {
-            text: "▾";
-            font-size: 11px;
-            color: Theme.muted;
-            vertical-alignment: center;
+        VerticalLayout {
+            alignment: center;
+            width: 8px;
+            Path {
+                width: 8px;
+                height: 5px;
+                commands: "M 0.5 1 L 4 4.5 L 7.5 1";
+                stroke: popup-area.has-hover ? Theme.foreground-soft : Theme.muted;
+                stroke-width: 1.5px;
+                stroke-line-cap: round;
+                stroke-line-join: round;
+            }
         }
     }
 
