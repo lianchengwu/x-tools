@@ -6,6 +6,7 @@ export component ActionButton inherits Rectangle {
     in property <string> text;
     in property <bool> enabled: true;
     in property <bool> is-primary: false;
+    in property <string> variant: "default"; // "default", "primary", "success", "danger"
     in property <length> min-btn-width: 68px;
     // 允许调用方覆盖高度（默认标准控件高度）
     in property <length> btn-height: Theme.control-height;
@@ -14,13 +15,17 @@ export component ActionButton inherits Rectangle {
     min-width: root.min-btn-width;
     height: root.btn-height;
     border-radius: Theme.radius-control;
-    border-width: root.is-primary ? 0px : 1px;
+    border-width: (root.is-primary || root.variant == "primary" || root.variant == "success" || root.variant == "danger") ? 0px : 1px;
     border-color: !root.enabled ? Theme.border-subtle : (touch.has-hover ? Theme.border-hover : Theme.border);
     background: !root.enabled 
-        ? (root.is-primary ? Theme.primary-disabled : Theme.background)
-        : (root.is-primary 
-            ? (touch.pressed ? Theme.primary-active : (touch.has-hover ? Theme.primary-hover : Theme.primary))
-            : (touch.pressed ? Theme.secondary-active : (touch.has-hover ? Theme.secondary-hover : Theme.secondary)));
+        ? ((root.is-primary || root.variant == "primary") ? Theme.primary-disabled : (root.variant == "success" ? Theme.border : (root.variant == "danger" ? Theme.border : Theme.background)))
+        : (root.variant == "success"
+            ? (touch.pressed ? Theme.success-active : (touch.has-hover ? Theme.success-hover : Theme.success))
+            : (root.variant == "danger"
+                ? (touch.pressed ? Theme.danger-active : (touch.has-hover ? Theme.danger-hover : Theme.danger))
+                : ((root.is-primary || root.variant == "primary") 
+                    ? (touch.pressed ? Theme.primary-active : (touch.has-hover ? Theme.primary-hover : Theme.primary))
+                    : (touch.pressed ? Theme.secondary-active : (touch.has-hover ? Theme.secondary-hover : Theme.secondary)))));
 
     animate background { duration: 100ms; }
     animate border-color { duration: 100ms; }
@@ -32,10 +37,10 @@ export component ActionButton inherits Rectangle {
         Text {
             text: root.text;
             font-size: Theme.font-size-body;
-            font-weight: root.is-primary ? 600 : 500;
+            font-weight: (root.is-primary || root.variant != "default") ? 600 : 500;
             color: !root.enabled 
-                ? (root.is-primary ? Theme.primary-fg : Theme.muted)
-                : (root.is-primary ? Theme.primary-fg : Theme.foreground);
+                ? ((root.is-primary || root.variant != "default") ? Theme.primary-fg : Theme.muted)
+                : ((root.is-primary || root.variant != "default") ? Theme.primary-fg : Theme.foreground);
             vertical-alignment: center;
             horizontal-alignment: center;
         }

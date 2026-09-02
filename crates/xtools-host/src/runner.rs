@@ -26,6 +26,7 @@ thread_local! {
     /// 通过 invoke/upgrade_in_event_loop 回到 UI 线程，用它把 AssistantDone
     /// 事件交回插件处理并同步视图。
     static AI_DISPATCH: RefCell<Option<AiDispatch>> = const { RefCell::new(None) };
+    static TIME_CLOCK_TIMER: RefCell<Option<slint::Timer>> = const { RefCell::new(None) };
 }
 
 pub fn find_plugin_wasm(arg: &str) -> Option<PathBuf> {
@@ -186,7 +187,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
     let (normal_w, normal_h, expanded_w, expanded_h) = match plugin_kind {
         "json" => (580, 600, 960, 720),
         "trans" => (540, 580, 840, 700),
-        "time" => (480, 400, 720, 500),
+        "time" => (720, 630, 720, 630),
         "ai" => (560, 640, 900, 780),
         _ => (
             manifest.window.width,
@@ -200,9 +201,13 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
     ui.set_plugin_kind(plugin_kind.into());
     ui.set_window_title(manifest.name.clone().into());
     ui.set_window_icon(manifest.mark.clone().into());
-    ui.set_resizable(manifest.window.resizable);
-    ui.set_show_expand_button(manifest.window.resizable);
+    let can_expand = manifest.window.resizable && plugin_kind != "time";
+    ui.set_resizable(can_expand);
+    ui.set_show_expand_button(can_expand);
     ui.set_window_opacity(crate::window_prefs::load().normalized_opacity());
+
+    // 默认小窗口：按对应插件的标准 normal_w / normal_h 显式设置初始窗口逻辑尺寸
+    ui.window().set_size(slint::LogicalSize::new(normal_w as f32, normal_h as f32));
 
     sync_ui_view(&ui, &initial_view, plugin_kind);
 
@@ -317,94 +322,394 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Wire Time Plugin Callbacks
+    // Wire Time Plugin Callbacks & Live Clock
     if plugin_kind == "time" {
+        use crate::time_engine::{self, TIMEZONE_NAMES};
+
+        let is_ms = Arc::new(AtomicBool::new(false));
+        let paused = Arc::new(AtomicBool::new(false));
+
+        // Populate Timezone dropdown options
+        let tz_labels: Vec<slint::SharedString> = TIMEZONE_NAMES
+            .iter()
+            .map(|(name, _)| (*name).into())
+            .collect();
+        ui.set_time_tz_options(slint::ModelRc::new(slint::VecModel::from(tz_labels)));
+        ui.set_time_tz_index(0);
+        ui.set_time_ts_tz_index(0);
+        ui.set_time_dt_tz_index(0);
+        ui.set_time_batch_tz_index(0);
+
+        // Initial Values
+        let now_s = time_engine::now_timestamp_secs();
+        let default_tz = time_engine::resolve_tz(0);
+        let now_dt = time_engine::ts_to_datetime(now_s, false, &default_tz).unwrap_or_default();
+
+        ui.set_time_now_val(now_s.to_string().into());
+        ui.set_time_now_is_ms(false);
+        ui.set_time_now_paused(false);
+
+        ui.set_time_ts_input(now_s.to_string().into());
+        ui.set_time_ts_unit(0);
+        ui.set_time_ts_result(now_dt.clone().into());
+
+        ui.set_time_dt_input(now_dt.into());
+        ui.set_time_dt_unit(0);
+        ui.set_time_dt_result(now_s.to_string().into());
+
+        // Live Clock Timer (ticks every 50ms, stored in thread_local to persist across event loop)
         {
-            let h = handle_event.clone();
-            ui.on_time_seconds_edited(move |val| {
-                h(UiEvent::InputChanged {
-                    id: "input_seconds".to_string(),
-                    value: val.to_string(),
-                });
-            });
-        }
-        {
-            let h = handle_event.clone();
-            ui.on_time_millis_edited(move |val| {
-                h(UiEvent::InputChanged {
-                    id: "input_millis".to_string(),
-                    value: val.to_string(),
-                });
-            });
-        }
-        {
-            let h = handle_event.clone();
-            ui.on_time_local_edited(move |val| {
-                h(UiEvent::InputChanged {
-                    id: "input_local".to_string(),
-                    value: val.to_string(),
-                });
-            });
-        }
-        {
-            let h = handle_event.clone();
-            ui.on_time_now_clicked(move || {
-                h(UiEvent::Click {
-                    id: "btn_now".to_string(),
-                });
-            });
-        }
-        {
-            let h = handle_event.clone();
+            let timer = slint::Timer::default();
             let ui_w = ui.as_weak();
-            ui.on_time_copy_sec(move || {
-                h(UiEvent::Click {
-                    id: "copy_seconds".to_string(),
-                });
+            let is_ms = is_ms.clone();
+            let paused = paused.clone();
+            timer.start(
+                slint::TimerMode::Repeated,
+                Duration::from_millis(50),
+                move || {
+                    if paused.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    if let Some(u) = ui_w.upgrade() {
+                        let val = if is_ms.load(Ordering::Relaxed) {
+                            time_engine::now_timestamp_millis().to_string()
+                        } else {
+                            time_engine::now_timestamp_secs().to_string()
+                        };
+                        u.set_time_now_val(val.into());
+                    }
+                },
+            );
+            TIME_CLOCK_TIMER.with(|cell| {
+                *cell.borrow_mut() = Some(timer);
+            });
+        }
+        // Top Card Callbacks
+        {
+            let ui_w = ui.as_weak();
+            let is_ms = is_ms.clone();
+            ui.on_time_toggle_unit(move || {
+                let cur = is_ms.load(Ordering::Relaxed);
+                let next = !cur;
+                is_ms.store(next, Ordering::Relaxed);
                 if let Some(u) = ui_w.upgrade() {
-                    u.set_time_sec_copied(true);
-                    let ui_reset = ui_w.clone();
-                    slint::Timer::single_shot(Duration::from_millis(1500), move || {
-                        if let Some(u) = ui_reset.upgrade() {
-                            u.set_time_sec_copied(false);
-                        }
-                    });
+                    u.set_time_now_is_ms(next);
+                    let val = if next {
+                        time_engine::now_timestamp_millis().to_string()
+                    } else {
+                        time_engine::now_timestamp_secs().to_string()
+                    };
+                    u.set_time_now_val(val.into());
                 }
             });
         }
         {
-            let h = handle_event.clone();
             let ui_w = ui.as_weak();
-            ui.on_time_copy_ms(move || {
-                h(UiEvent::Click {
-                    id: "copy_millis".to_string(),
-                });
+            ui.on_time_copy_now(move || {
                 if let Some(u) = ui_w.upgrade() {
-                    u.set_time_ms_copied(true);
-                    let ui_reset = ui_w.clone();
-                    slint::Timer::single_shot(Duration::from_millis(1500), move || {
-                        if let Some(u) = ui_reset.upgrade() {
-                            u.set_time_ms_copied(false);
-                        }
-                    });
+                    let val = u.get_time_now_val();
+                    if !val.is_empty() {
+                        copy_to_clipboard(&val);
+                        u.set_time_now_copied(true);
+                        let ui_reset = ui_w.clone();
+                        slint::Timer::single_shot(Duration::from_millis(1500), move || {
+                            if let Some(u) = ui_reset.upgrade() {
+                                u.set_time_now_copied(false);
+                            }
+                        });
+                    }
                 }
             });
         }
         {
-            let h = handle_event.clone();
             let ui_w = ui.as_weak();
-            ui.on_time_copy_local(move || {
-                h(UiEvent::Click {
-                    id: "copy_local".to_string(),
-                });
+            let paused = paused.clone();
+            ui.on_time_toggle_pause(move || {
+                let cur = paused.load(Ordering::Relaxed);
+                let next = !cur;
+                paused.store(next, Ordering::Relaxed);
                 if let Some(u) = ui_w.upgrade() {
-                    u.set_time_local_copied(true);
-                    let ui_reset = ui_w.clone();
-                    slint::Timer::single_shot(Duration::from_millis(1500), move || {
-                        if let Some(u) = ui_reset.upgrade() {
-                            u.set_time_local_copied(false);
+                    u.set_time_now_paused(next);
+                }
+            });
+        }
+
+        // Ts -> Dt Callbacks
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_ts_convert(move || {
+                if let Some(u) = ui_w.upgrade() {
+                    let input = u.get_time_ts_input();
+                    let trimmed = input.trim();
+                    if trimmed.is_empty() {
+                        u.set_time_ts_error("请输入时间戳".into());
+                        return;
+                    }
+                    let is_ms = u.get_time_ts_unit() == 1;
+                    let tz_idx = u.get_time_ts_tz_index() as usize;
+                    let tz = time_engine::resolve_tz(tz_idx);
+
+                    match trimmed.parse::<i64>() {
+                        Ok(ts) => match time_engine::ts_to_datetime(ts, is_ms, &tz) {
+                            Ok(dt) => {
+                                u.set_time_ts_result(dt.into());
+                                u.set_time_ts_error("".into());
+                            }
+                            Err(e) => {
+                                u.set_time_ts_error(e.into());
+                            }
+                        },
+                        Err(_) => {
+                            u.set_time_ts_error("时间戳格式错误，请输入有效的整型数字".into());
                         }
-                    });
+                    }
+                }
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_ts_fill_current(move || {
+                if let Some(u) = ui_w.upgrade() {
+                    let now_val = u.get_time_now_val();
+                    let is_ms = u.get_time_now_is_ms();
+                    u.set_time_ts_input(now_val.clone());
+                    u.set_time_ts_unit(if is_ms { 1 } else { 0 });
+
+                    let tz_idx = u.get_time_ts_tz_index() as usize;
+                    let tz = time_engine::resolve_tz(tz_idx);
+                    if let Ok(ts) = now_val.trim().parse::<i64>() {
+                        if let Ok(dt) = time_engine::ts_to_datetime(ts, is_ms, &tz) {
+                            u.set_time_ts_result(dt.into());
+                            u.set_time_ts_error("".into());
+                        }
+                    }
+                }
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_ts_toggle_unit(move || {
+                if let Some(u) = ui_w.upgrade() {
+                    let cur = u.get_time_ts_unit();
+                    let next = if cur == 0 { 1 } else { 0 };
+                    u.set_time_ts_unit(next);
+
+                    let input = u.get_time_ts_input();
+                    let trimmed = input.trim();
+                    if let Ok(ts) = trimmed.parse::<i64>() {
+                        let tz_idx = u.get_time_ts_tz_index() as usize;
+                        let tz = time_engine::resolve_tz(tz_idx);
+                        if let Ok(dt) = time_engine::ts_to_datetime(ts, next == 1, &tz) {
+                            u.set_time_ts_result(dt.into());
+                            u.set_time_ts_error("".into());
+                        }
+                    }
+                }
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_ts_tz_changed(move |idx| {
+                if let Some(u) = ui_w.upgrade() {
+                    u.set_time_ts_tz_index(idx);
+                    let input = u.get_time_ts_input();
+                    let trimmed = input.trim();
+                    if let Ok(ts) = trimmed.parse::<i64>() {
+                        let is_ms = u.get_time_ts_unit() == 1;
+                        let tz = time_engine::resolve_tz(idx as usize);
+                        if let Ok(dt) = time_engine::ts_to_datetime(ts, is_ms, &tz) {
+                            u.set_time_ts_result(dt.into());
+                            u.set_time_ts_error("".into());
+                        }
+                    }
+                }
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_ts_copy(move || {
+                if let Some(u) = ui_w.upgrade() {
+                    let res = u.get_time_ts_result();
+                    if !res.is_empty() {
+                        copy_to_clipboard(&res);
+                        u.set_time_ts_copied(true);
+                        let ui_reset = ui_w.clone();
+                        slint::Timer::single_shot(Duration::from_millis(1500), move || {
+                            if let Some(u) = ui_reset.upgrade() {
+                                u.set_time_ts_copied(false);
+                            }
+                        });
+                    }
+                }
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_ts_input_edited(move |_| {
+                if let Some(u) = ui_w.upgrade() {
+                    u.set_time_ts_error("".into());
+                }
+            });
+        }
+
+        // Dt -> Ts Callbacks
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_dt_convert(move || {
+                if let Some(u) = ui_w.upgrade() {
+                    let input = u.get_time_dt_input();
+                    let trimmed = input.trim();
+                    if trimmed.is_empty() {
+                        u.set_time_dt_error("请输入日期时间".into());
+                        return;
+                    }
+                    let is_ms = u.get_time_dt_unit() == 1;
+                    let tz_idx = u.get_time_dt_tz_index() as usize;
+                    let tz = time_engine::resolve_tz(tz_idx);
+
+                    match time_engine::datetime_to_ts(trimmed, is_ms, &tz) {
+                        Ok(ts) => {
+                            u.set_time_dt_result(ts.to_string().into());
+                            u.set_time_dt_error("".into());
+                        }
+                        Err(e) => {
+                            u.set_time_dt_error(e.into());
+                        }
+                    }
+                }
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_dt_toggle_unit(move || {
+                if let Some(u) = ui_w.upgrade() {
+                    let cur = u.get_time_dt_unit();
+                    let next = if cur == 0 { 1 } else { 0 };
+                    u.set_time_dt_unit(next);
+
+                    let input = u.get_time_dt_input();
+                    let trimmed = input.trim();
+                    if !trimmed.is_empty() {
+                        let tz_idx = u.get_time_dt_tz_index() as usize;
+                        let tz = time_engine::resolve_tz(tz_idx);
+                        if let Ok(ts) = time_engine::datetime_to_ts(trimmed, next == 1, &tz) {
+                            u.set_time_dt_result(ts.to_string().into());
+                            u.set_time_dt_error("".into());
+                        }
+                    }
+                }
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_dt_tz_changed(move |idx| {
+                if let Some(u) = ui_w.upgrade() {
+                    u.set_time_dt_tz_index(idx);
+                    let input = u.get_time_dt_input();
+                    let trimmed = input.trim();
+                    if !trimmed.is_empty() {
+                        let is_ms = u.get_time_dt_unit() == 1;
+                        let tz = time_engine::resolve_tz(idx as usize);
+                        if let Ok(ts) = time_engine::datetime_to_ts(trimmed, is_ms, &tz) {
+                            u.set_time_dt_result(ts.to_string().into());
+                            u.set_time_dt_error("".into());
+                        }
+                    }
+                }
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_dt_copy(move || {
+                if let Some(u) = ui_w.upgrade() {
+                    let res = u.get_time_dt_result();
+                    if !res.is_empty() {
+                        copy_to_clipboard(&res);
+                        u.set_time_dt_copied(true);
+                        let ui_reset = ui_w.clone();
+                        slint::Timer::single_shot(Duration::from_millis(1500), move || {
+                            if let Some(u) = ui_reset.upgrade() {
+                                u.set_time_dt_copied(false);
+                            }
+                        });
+                    }
+                }
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_dt_input_edited(move |_| {
+                if let Some(u) = ui_w.upgrade() {
+                    u.set_time_dt_error("".into());
+                }
+            });
+        }
+
+        // Batch Callbacks
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_batch_convert(move || {
+                if let Some(u) = ui_w.upgrade() {
+                    let input = u.get_time_batch_input();
+                    let mode = u.get_time_batch_mode() as usize;
+                    let tz_idx = u.get_time_batch_tz_index() as usize;
+                    let tz = time_engine::resolve_tz(tz_idx);
+
+                    let result = time_engine::batch_convert(&input, mode, &tz);
+                    u.set_time_batch_result(result.into());
+                    u.set_time_batch_error("".into());
+                }
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_batch_mode_changed(move |mode| {
+                if let Some(u) = ui_w.upgrade() {
+                    u.set_time_batch_mode(mode);
+                }
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_batch_tz_changed(move |idx| {
+                if let Some(u) = ui_w.upgrade() {
+                    u.set_time_batch_tz_index(idx);
+                }
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_batch_input_edited(move |_| {
+                if let Some(u) = ui_w.upgrade() {
+                    u.set_time_batch_error("".into());
+                }
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_batch_copy(move || {
+                if let Some(u) = ui_w.upgrade() {
+                    let res = u.get_time_batch_result();
+                    if !res.is_empty() {
+                        copy_to_clipboard(&res);
+                        u.set_time_batch_copied(true);
+                        let ui_reset = ui_w.clone();
+                        slint::Timer::single_shot(Duration::from_millis(1500), move || {
+                            if let Some(u) = ui_reset.upgrade() {
+                                u.set_time_batch_copied(false);
+                            }
+                        });
+                    }
+                }
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_time_batch_clear(move || {
+                if let Some(u) = ui_w.upgrade() {
+                    u.set_time_batch_input("".into());
+                    u.set_time_batch_result("".into());
+                    u.set_time_batch_error("".into());
                 }
             });
         }

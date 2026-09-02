@@ -164,9 +164,9 @@ export component RunnerWindow inherits Window {
     default-font-family: "Microsoft YaHei, Segoe UI, PingFang SC, Noto Sans CJK SC, sans-serif";
     min-width: 420px;
     min-height: 320px;
-    // 全部窗口统一放大到 1.5 倍（840×780）
-    preferred-width: 840px;
-    preferred-height: 780px;
+    // 时间戳工具：480×420 的 1.5 倍，避免控件挤在一起
+    preferred-width: root.plugin-kind == "time" ? 720px : 840px;
+    preferred-height: root.plugin-kind == "time" ? 630px : 780px;
 
     in-out property <string> window-title: "xtools";
     in-out property <string> window-icon: "⚡";
@@ -198,11 +198,47 @@ export component RunnerWindow inherits Window {
     // -------------------------------------------------------------------------
     // Time Plugin State & Callbacks
     // -------------------------------------------------------------------------
+    // Top Card: 当前时间戳实时看板
+    in-out property <string> time-now-val: "";
+    in-out property <bool> time-now-is-ms: false;
+    in-out property <bool> time-now-paused: false;
+    in-out property <bool> time-now-copied: false;
+
+    // Tabs: 0 = 单个转换, 1 = 批量转换
+    in-out property <int> time-active-tab: 0;
+
+    // Common Timezone options
+    in-out property <int> time-tz-index: 0;
+    in-out property <[string]> time-tz-options: [];
+
+    // 单个转换：1. 时间戳转日期时间
+    in-out property <string> time-ts-input: "";
+    in-out property <int> time-ts-unit: 0; // 0 = 秒 (s), 1 = 毫秒 (ms)
+    in-out property <int> time-ts-tz-index: 0;
+    in-out property <string> time-ts-result: "";
+    in-out property <string> time-ts-error: "";
+    in-out property <bool> time-ts-copied: false;
+
+    // 单个转换：2. 日期时间转时间戳
+    in-out property <string> time-dt-input: "";
+    in-out property <int> time-dt-unit: 0; // 0 = 秒 (s), 1 = 毫秒 (ms)
+    in-out property <int> time-dt-tz-index: 0;
+    in-out property <string> time-dt-result: "";
+    in-out property <string> time-dt-error: "";
+    in-out property <bool> time-dt-copied: false;
+
+    // 批量转换
+    in-out property <int> time-batch-mode: 0; // 0 = 时间戳转日期, 1 = 日期转时间戳
+    in-out property <int> time-batch-tz-index: 0;
+    in-out property <string> time-batch-input: "";
+    in-out property <string> time-batch-result: "";
+    in-out property <string> time-batch-error: "";
+    in-out property <bool> time-batch-copied: false;
+
+    // Legacy properties kept for compatibility
     in-out property <string> time-seconds: "";
     in-out property <string> time-millis: "";
     in-out property <string> time-local: "";
-    in-out property <int> time-tz-index: 0;
-    in-out property <[string]> time-tz-options: [];
     in-out property <bool> time-sec-copied: false;
     in-out property <bool> time-ms-copied: false;
     in-out property <bool> time-local-copied: false;
@@ -210,13 +246,33 @@ export component RunnerWindow inherits Window {
     in-out property <string> time-error-millis: "";
     in-out property <string> time-error-local: "";
 
-    callback time-seconds-edited(string);
-    callback time-millis-edited(string);
-    callback time-local-edited(string);
-    callback time-now-clicked();
-    callback time-copy-sec();
-    callback time-copy-ms();
-    callback time-copy-local();
+    // Callbacks for Top Card
+    callback time-toggle-unit();
+    callback time-copy-now();
+    callback time-toggle-pause();
+
+    // Callbacks for Ts -> Dt
+    callback time-ts-input-edited(string);
+    callback time-ts-toggle-unit();
+    callback time-ts-tz-changed(int);
+    callback time-ts-fill-current();
+    callback time-ts-convert();
+    callback time-ts-copy();
+
+    // Callbacks for Dt -> Ts
+    callback time-dt-input-edited(string);
+    callback time-dt-toggle-unit();
+    callback time-dt-tz-changed(int);
+    callback time-dt-convert();
+    callback time-dt-copy();
+
+    // Callbacks for Batch
+    callback time-batch-mode-changed(int);
+    callback time-batch-tz-changed(int);
+    callback time-batch-input-edited(string);
+    callback time-batch-convert();
+    callback time-batch-copy();
+    callback time-batch-clear();
     callback time-tz-changed(int);
 
     // -------------------------------------------------------------------------
@@ -339,6 +395,14 @@ export component RunnerWindow inherits Window {
                     return accept;
                 }
             }
+            if (event.text == "\n" && !event.modifiers.shift && !event.modifiers.control) {
+                if (root.plugin-kind == "trans") {
+                    if (!root.trans-pending && root.trans-source != "") {
+                        root.trans-translate();
+                        return accept;
+                    }
+                }
+            }
             reject
         }
         ToolShell {
@@ -351,7 +415,6 @@ export component RunnerWindow inherits Window {
             show-expand-button: root.show-expand-button;
             is-expanded: root.is-expanded;
             close-clicked => { root.close-clicked(); }
-            expand-clicked => { root.expand-clicked(); }
             window-drag-started => { root.window-drag-started(); }
             window-dragged(dx, dy) => { root.window-dragged(dx, dy); }
             window-resize-started(edge) => { root.window-resize-started(edge); }
@@ -361,92 +424,450 @@ export component RunnerWindow inherits Window {
             // 1. TIME PLUGIN VIEW
             // =================================================================
             if root.plugin-kind == "time" : VerticalLayout {
-                spacing: 16px;
-                alignment: start;
+                spacing: 12px;
+                alignment: stretch;
                 vertical-stretch: 1;
 
-                VerticalLayout {
-                    spacing: 4px;
-                    FieldWithAction {
-                        caption: "秒 (Unix Timestamp / s)";
-                        text <=> root.time-seconds;
-                        is-copy: true;
-                        action-copied: root.time-sec-copied;
-                        action-enabled: true;
-                        action-clicked => { root.time-copy-sec(); }
-                        edited(t) => { root.time-seconds-edited(t); }
-                        accepted(t) => { root.time-seconds-edited(t); }
-                    }
-                    if root.time-error-seconds != "" : InlineError {
-                        error-text: root.time-error-seconds;
-                    }
-                }
-
-                VerticalLayout {
-                    spacing: 4px;
-                    FieldWithAction {
-                        caption: "毫秒 (Unix Timestamp / ms)";
-                        text <=> root.time-millis;
-                        is-copy: true;
-                        action-copied: root.time-ms-copied;
-                        action-enabled: true;
-                        action-clicked => { root.time-copy-ms(); }
-                        edited(t) => { root.time-millis-edited(t); }
-                        accepted(t) => { root.time-millis-edited(t); }
-                    }
-                    if root.time-error-millis != "" : InlineError {
-                        error-text: root.time-error-millis;
-                    }
-                }
-
-                VerticalLayout {
-                    spacing: 5px;
+                // -------------------------------------------------------------
+                // A. 当前时间戳卡片 (Header Card)
+                // -------------------------------------------------------------
+                Rectangle {
+                    border-radius: Theme.radius-card;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    background: Theme.secondary;
 
                     HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
                         alignment: space-between;
-                        Text {
-                            text: "时间 (DateTime)";
-                            font-size: Theme.font-size-small;
-                            font-weight: 600;
-                            color: Theme.muted;
-                            vertical-alignment: center;
+
+                        // 左侧：标签 + 大号时间戳 + 单位角标
+                        VerticalLayout {
+                            spacing: 4px;
+                            alignment: center;
+
+                            Text {
+                                text: "当前时间戳";
+                                font-size: Theme.font-size-small;
+                                font-weight: 500;
+                                color: Theme.muted;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+
+                                Text {
+                                    text: root.time-now-val;
+                                    font-size: 24px;
+                                    font-weight: 700;
+                                    font-family: Theme.font-mono;
+                                    color: Theme.foreground;
+                                    vertical-alignment: center;
+                                }
+
+                                Rectangle {
+                                    height: 22px;
+                                    border-radius: 4px;
+                                    background: Theme.success-bg;
+                                    border-width: 1px;
+                                    border-color: Theme.success-border;
+
+                                    HorizontalLayout {
+                                        padding-left: 6px;
+                                        padding-right: 6px;
+                                        alignment: center;
+                                        Text {
+                                            text: root.time-now-is-ms ? "毫秒" : "秒";
+                                            font-size: 11px;
+                                            font-weight: 600;
+                                            color: Theme.success;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                            }
                         }
 
-                        DropdownSelector {
-                            label: "时区：";
-                            options: root.time-tz-options;
-                            selected-index <=> root.time-tz-index;
-                            selector-width: 250px;
-                            selection-changed(idx) => { root.time-tz-changed(idx); }
+                        // 右侧：切换单位 + 复制 + 暂停/继续
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: end;
+
+                            ActionButton {
+                                text: "🔄 切换单位";
+                                min-btn-width: 82px;
+                                clicked => { root.time-toggle-unit(); }
+                            }
+
+                            ActionButton {
+                                text: root.time-now-copied ? "✓ 已复制" : "📋 复制";
+                                min-btn-width: 72px;
+                                clicked => { root.time-copy-now(); }
+                            }
+
+                            ActionButton {
+                                variant: root.time-now-paused ? "success" : "danger";
+                                text: root.time-now-paused ? "▶ 继续" : "⏹ 暂停";
+                                min-btn-width: 72px;
+                                clicked => { root.time-toggle-pause(); }
+                            }
                         }
                     }
+                }
+
+                // -------------------------------------------------------------
+                // B. 选项卡：单个转换 / 批量转换 (Tabs)
+                // -------------------------------------------------------------
+                Rectangle {
+                    height: 36px;
+                    border-radius: Theme.radius-control;
+                    background: Theme.secondary;
+
+                    HorizontalLayout {
+                        padding: 3px;
+                        spacing: 4px;
+
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            border-radius: 6px;
+                            background: root.time-active-tab == 0 ? Theme.card-bg : transparent;
+                            border-width: root.time-active-tab == 0 ? 1px : 0px;
+                            border-color: root.time-active-tab == 0 ? Theme.border : transparent;
+
+                            Text {
+                                text: "单个转换";
+                                font-size: Theme.font-size-body;
+                                font-weight: root.time-active-tab == 0 ? 600 : 500;
+                                color: root.time-active-tab == 0 ? Theme.foreground : Theme.muted;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => { root.time-active-tab = 0; }
+                            }
+                        }
+
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            border-radius: 6px;
+                            background: root.time-active-tab == 1 ? Theme.card-bg : transparent;
+                            border-width: root.time-active-tab == 1 ? 1px : 0px;
+                            border-color: root.time-active-tab == 1 ? Theme.border : transparent;
+
+                            Text {
+                                text: "批量转换";
+                                font-size: Theme.font-size-body;
+                                font-weight: root.time-active-tab == 1 ? 600 : 500;
+                                color: root.time-active-tab == 1 ? Theme.foreground : Theme.muted;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => { root.time-active-tab = 1; }
+                            }
+                        }
+                    }
+                }
+
+                // -------------------------------------------------------------
+                // C. 转换区域 (根据 Tab 切换)
+                // -------------------------------------------------------------
+                if root.time-active-tab == 0 : VerticalLayout {
+                    spacing: 12px;
+                    vertical-stretch: 1;
+
+                    // 1. 时间戳转日期时间 Card
+                    VerticalLayout {
+                        spacing: 6px;
+
+                        // 标题
+                        Text {
+                            text: "🕒 时间戳转日期时间";
+                            font-size: Theme.font-size-title;
+                            font-weight: 600;
+                            color: Theme.foreground;
+                        }
+
+                        // 输入标签行
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: "时间戳";
+                                font-size: Theme.font-size-small;
+                                font-weight: 500;
+                                color: Theme.muted;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: "时区";
+                                font-size: Theme.font-size-small;
+                                font-weight: 500;
+                                color: Theme.muted;
+                                width: 140px;
+                            }
+                            Rectangle { width: 156px; }
+                        }
+
+                        // 输入与转换操作行
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: stretch;
+
+                            ValueInput {
+                                text <=> root.time-ts-input;
+                                placeholder: "输入时间戳";
+                                horizontal-stretch: 1;
+                                edited(t) => { root.time-ts-input-edited(t); }
+                                accepted(t) => { root.time-ts-convert(); }
+                            }
+
+                            ActionButton {
+                                text: root.time-ts-unit == 0 ? "秒 (s)" : "毫秒 (ms)";
+                                min-btn-width: 68px;
+                                clicked => { root.time-ts-toggle-unit(); }
+                            }
+
+                            DropdownSelector {
+                                options: root.time-tz-options;
+                                selected-index <=> root.time-ts-tz-index;
+                                selector-width: 140px;
+                                selection-changed(idx) => { root.time-ts-tz-changed(idx); }
+                            }
+
+                            ActionButton {
+                                text: "⚡ 填入当前";
+                                min-btn-width: 82px;
+                                clicked => { root.time-ts-fill-current(); }
+                            }
+
+                            ActionButton {
+                                variant: "success";
+                                text: "转换";
+                                min-btn-width: 66px;
+                                clicked => { root.time-ts-convert(); }
+                            }
+                        }
+
+                        // 结果标签行
+                        Text {
+                            text: "转换结果";
+                            font-size: Theme.font-size-small;
+                            font-weight: 500;
+                            color: Theme.muted;
+                        }
+
+                        // 结果输出行
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: stretch;
+
+                            ValueInput {
+                                text <=> root.time-ts-result;
+                                placeholder: "转换结果";
+                                read-only: true;
+                                horizontal-stretch: 1;
+                            }
+
+                            CopyButton {
+                                copied: root.time-ts-copied;
+                                enabled: root.time-ts-result != "";
+                                clicked => { root.time-ts-copy(); }
+                            }
+                        }
+
+                        if root.time-ts-error != "" : InlineError {
+                            error-text: root.time-ts-error;
+                        }
+                    }
+
+                    // 分割线
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.border;
+                    }
+
+                    // 2. 日期时间转时间戳 Card
+                    VerticalLayout {
+                        spacing: 6px;
+
+                        // 标题
+                        Text {
+                            text: "📅 日期时间转时间戳";
+                            font-size: Theme.font-size-title;
+                            font-weight: 600;
+                            color: Theme.foreground;
+                        }
+
+                        // 输入标签行
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: "日期时间";
+                                font-size: Theme.font-size-small;
+                                font-weight: 500;
+                                color: Theme.muted;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: "时区";
+                                font-size: Theme.font-size-small;
+                                font-weight: 500;
+                                color: Theme.muted;
+                                width: 140px;
+                            }
+                            Rectangle { width: 74px; }
+                        }
+
+                        // 输入与转换操作行
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: stretch;
+
+                            ValueInput {
+                                text <=> root.time-dt-input;
+                                placeholder: "YYYY-MM-DD HH:mm:ss";
+                                horizontal-stretch: 1;
+                                edited(t) => { root.time-dt-input-edited(t); }
+                                accepted(t) => { root.time-dt-convert(); }
+                            }
+
+                            DropdownSelector {
+                                options: root.time-tz-options;
+                                selected-index <=> root.time-dt-tz-index;
+                                selector-width: 140px;
+                                selection-changed(idx) => { root.time-dt-tz-changed(idx); }
+                            }
+
+                            ActionButton {
+                                variant: "success";
+                                text: "转换";
+                                min-btn-width: 66px;
+                                clicked => { root.time-dt-convert(); }
+                            }
+                        }
+
+                        // 结果标签行
+                        Text {
+                            text: "转换结果";
+                            font-size: Theme.font-size-small;
+                            font-weight: 500;
+                            color: Theme.muted;
+                        }
+
+                        // 结果输出行
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: stretch;
+
+                            ValueInput {
+                                text <=> root.time-dt-result;
+                                placeholder: "转换结果";
+                                read-only: true;
+                                horizontal-stretch: 1;
+                            }
+
+                            ActionButton {
+                                text: root.time-dt-unit == 0 ? "秒 (s)" : "毫秒 (ms)";
+                                min-btn-width: 68px;
+                                clicked => { root.time-dt-toggle-unit(); }
+                            }
+
+                            CopyButton {
+                                copied: root.time-dt-copied;
+                                enabled: root.time-dt-result != "";
+                                clicked => { root.time-dt-copy(); }
+                            }
+                        }
+
+                        if root.time-dt-error != "" : InlineError {
+                            error-text: root.time-dt-error;
+                        }
+                    }
+                }
+
+                // 批量转换视图
+                if root.time-active-tab == 1 : VerticalLayout {
+                    spacing: 10px;
+                    vertical-stretch: 1;
 
                     HorizontalLayout {
                         spacing: 8px;
                         alignment: stretch;
 
-                        ValueInput {
-                            text <=> root.time-local;
-                            horizontal-stretch: 1;
-                            edited(t) => { root.time-local-edited(t); }
-                            accepted(t) => { root.time-local-edited(t); }
+                        ActionButton {
+                            text: root.time-batch-mode == 0 ? "时间戳 → 日期时间" : "日期时间 → 时间戳";
+                            min-btn-width: 140px;
+                            clicked => {
+                                root.time-batch-mode = root.time-batch-mode == 0 ? 1 : 0;
+                                root.time-batch-mode-changed(root.time-batch-mode);
+                            }
+                        }
+
+                        DropdownSelector {
+                            label: "时区：";
+                            options: root.time-tz-options;
+                            selected-index <=> root.time-batch-tz-index;
+                            selector-width: 180px;
+                            selection-changed(idx) => { root.time-batch-tz-changed(idx); }
+                        }
+
+                        Rectangle { horizontal-stretch: 1; }
+
+                        ActionButton {
+                            variant: "success";
+                            text: "批量转换";
+                            min-btn-width: 80px;
+                            clicked => { root.time-batch-convert(); }
                         }
 
                         ActionButton {
-                            text: "⚡ 现在";
-                            is-primary: true;
-                            clicked => { root.time-now-clicked(); }
-                        }
-
-                        CopyButton {
-                            copied: root.time-local-copied;
-                            enabled: true;
-                            clicked => { root.time-copy-local(); }
+                            text: "🗑 清空";
+                            min-btn-width: 66px;
+                            clicked => { root.time-batch-clear(); }
                         }
                     }
 
-                    if root.time-error-local != "" : InlineError {
-                        error-text: root.time-error-local;
+                    Text {
+                        text: root.time-batch-mode == 0 ? "批量输入（每行一个时间戳，支持秒/毫秒）：" : "批量输入（每行一个日期时间）：";
+                        font-size: Theme.font-size-small;
+                        color: Theme.muted;
+                    }
+
+                    MultilineEditor {
+                        text <=> root.time-batch-input;
+                        height: 110px;
+                        edited(t) => { root.time-batch-input-edited(t); }
+                    }
+
+                    HorizontalLayout {
+                        Text {
+                            text: "批量转换结果：";
+                            font-size: Theme.font-size-small;
+                            color: Theme.muted;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        CopyButton {
+                            copied: root.time-batch-copied;
+                            enabled: root.time-batch-result != "";
+                            clicked => { root.time-batch-copy(); }
+                        }
+                    }
+
+                    MultilineEditor {
+                        text <=> root.time-batch-result;
+                        vertical-stretch: 1;
+                        read-only: true;
+                    }
+
+                    if root.time-batch-error != "" : InlineError {
+                        error-text: root.time-batch-error;
                     }
                 }
             }
@@ -782,6 +1203,13 @@ export component RunnerWindow inherits Window {
                 MultilineEditor {
                     text <=> root.trans-source;
                     vertical-stretch: 1;
+                    enter-sends: true;
+                    accepted(text) => {
+                        if (!root.trans-pending && text != "") {
+                            root.trans-source-edited(text);
+                            root.trans-translate();
+                        }
+                    }
                     edited(t) => { root.trans-source-edited(t); }
                 }
 
@@ -815,7 +1243,7 @@ export component RunnerWindow inherits Window {
                     }
 
                     ActionButton {
-                        text: root.trans-pending ? "翻译中…" : "🚀 翻译";
+                        text: root.trans-pending ? "翻译中…" : "翻译";
                         is-primary: true;
                         enabled: !root.trans-pending && root.trans-source != "";
                         clicked => { root.trans-translate(); }

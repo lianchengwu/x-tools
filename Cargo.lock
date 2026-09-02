@@ -7527,6 +7527,7 @@ dependencies = [
  "env_logger",
  "gtk4",
  "gtk4-layer-shell",
+ "jiff",
  "ksni",
  "log",
  "parking_lot",

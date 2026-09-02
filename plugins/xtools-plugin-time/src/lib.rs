@@ -32,9 +32,9 @@ impl XPlugin for TimePlugin {
             mark: "clock".to_string(),
             icon_svg: None,
             window: WindowConfig {
-                width: 480,
-                height: 400,
-                resizable: true,
+                width: 720,
+                height: 630,
+                resizable: false,
                 title: Some("时间戳转换".to_string()),
             },
             permissions: vec![

@@ -8,6 +8,7 @@ mod layout;
 mod runner;
 mod settings_window;
 mod window_prefs;
+mod time_engine;
 
 // 软件渲染器与 Windows 宿主；Linux 测试构建同样编译 paint 以跑渲染单测
 #[cfg(any(windows, test))]

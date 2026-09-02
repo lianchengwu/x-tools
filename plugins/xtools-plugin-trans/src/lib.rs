@@ -106,7 +106,7 @@ impl XPlugin for TransPlugin {
         let translate_btn_label = if self.pending {
             "翻译中…"
         } else {
-            "🚀 翻译"
+            "翻译"
         };
 
         let lang_bar = row(vec![
