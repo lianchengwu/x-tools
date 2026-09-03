@@ -200,10 +200,12 @@ export component ValueInput inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> read-only: false;
     in property <string> placeholder: "";
+    // 允许调用方覆盖高度（默认标准控件高度）
+    in property <length> input-height: Theme.control-height;
     callback edited(string);
     callback accepted(string);
 
-    height: Theme.control-height;
+    height: root.input-height;
     border-radius: Theme.radius-control;
     border-width: input.has-focus ? 1.5px : 1px;
     border-color: input.has-focus ? Theme.primary : (touch.has-hover ? Theme.border-hover : Theme.border);

@@ -622,6 +622,7 @@ export component RunnerWindow inherits Window {
                             ValueInput {
                                 text <=> root.time-ts-input;
                                 placeholder: "输入时间戳";
+                                input-height: Theme.control-height * 1.2;
                                 horizontal-stretch: 1;
                                 edited(t) => { root.time-ts-input-edited(t); }
                                 accepted(t) => { root.time-ts-convert(); }
@@ -671,6 +672,7 @@ export component RunnerWindow inherits Window {
                                 text <=> root.time-ts-result;
                                 placeholder: "转换结果";
                                 read-only: true;
+                                input-height: Theme.control-height * 1.2;
                                 horizontal-stretch: 1;
                             }
 
@@ -732,6 +734,7 @@ export component RunnerWindow inherits Window {
                             ValueInput {
                                 text <=> root.time-dt-input;
                                 placeholder: "YYYY-MM-DD HH:mm:ss";
+                                input-height: Theme.control-height * 1.2;
                                 horizontal-stretch: 1;
                                 edited(t) => { root.time-dt-input-edited(t); }
                                 accepted(t) => { root.time-dt-convert(); }
@@ -769,6 +772,7 @@ export component RunnerWindow inherits Window {
                                 text <=> root.time-dt-result;
                                 placeholder: "转换结果";
                                 read-only: true;
+                                input-height: Theme.control-height * 1.2;
                                 horizontal-stretch: 1;
                             }
 
