@@ -164,9 +164,11 @@ export component RunnerWindow inherits Window {
     default-font-family: "Microsoft YaHei, Segoe UI, PingFang SC, Noto Sans CJK SC, sans-serif";
     min-width: 420px;
     min-height: 320px;
-    // 时间戳工具：480×420 的 1.5 倍，避免控件挤在一起
-    preferred-width: root.plugin-kind == "time" ? 720px : 840px;
-    preferred-height: root.plugin-kind == "time" ? 630px : 780px;
+    // 由宿主按 580×600 / 1.5x expanded 写入，避免 preferred 把宽度钉死
+    in-out property <int> frame-w: 580;
+    in-out property <int> frame-h: 600;
+    preferred-width: root.frame-w * 1px;
+    preferred-height: root.frame-h * 1px;
 
     in-out property <string> window-title: "xtools";
     in-out property <string> window-icon: "⚡";
@@ -415,6 +417,7 @@ export component RunnerWindow inherits Window {
             show-expand-button: root.show-expand-button;
             is-expanded: root.is-expanded;
             close-clicked => { root.close-clicked(); }
+            expand-clicked => { root.expand-clicked(); }
             window-drag-started => { root.window-drag-started(); }
             window-dragged(dx, dy) => { root.window-dragged(dx, dy); }
             window-resize-started(edge) => { root.window-resize-started(edge); }

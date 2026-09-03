@@ -133,6 +133,8 @@ pub fn run_settings() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_window_icon("⚙".into());
     ui.set_resizable(false);
     ui.set_show_expand_button(false);
+    ui.set_frame_w(840);
+    ui.set_frame_h(780);
 
     ui.set_settings_baidu_appid(baidu.baidu_appid.into());
     ui.set_settings_baidu_key(baidu.baidu_key.into());

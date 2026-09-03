@@ -32,8 +32,8 @@ impl XPlugin for TimePlugin {
             mark: "clock".to_string(),
             icon_svg: None,
             window: WindowConfig {
-                width: 720,
-                height: 630,
+                width: 580,
+                height: 600,
                 resizable: false,
                 title: Some("时间戳转换".to_string()),
             },

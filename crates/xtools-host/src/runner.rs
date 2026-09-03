@@ -115,6 +115,19 @@ fn show_toast(ui_weak: slint::Weak<RunnerWindow>, message: &str, is_success: boo
     }
 }
 
+const EXPAND_SCALE: f32 = 1.5;
+const TOOL_WINDOW_W: u32 = 580;
+const TOOL_WINDOW_H: u32 = 600;
+
+fn plugin_window_sizes() -> (u32, u32, u32, u32) {
+    (
+        TOOL_WINDOW_W,
+        TOOL_WINDOW_H,
+        (TOOL_WINDOW_W as f32 * EXPAND_SCALE).round() as u32,
+        (TOOL_WINDOW_H as f32 * EXPAND_SCALE).round() as u32,
+    )
+}
+
 pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
@@ -184,27 +197,17 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
     instance.init()?;
     let initial_view = instance.render()?;
 
-    let (normal_w, normal_h, expanded_w, expanded_h) = match plugin_kind {
-        "json" => (580, 600, 960, 720),
-        "trans" => (540, 580, 840, 700),
-        "time" => (720, 630, 720, 630),
-        "ai" => (560, 640, 900, 780),
-        _ => (
-            manifest.window.width,
-            manifest.window.height,
-            (manifest.window.width as f32 * 1.5).round() as u32,
-            (manifest.window.height as f32 * 1.35).round() as u32,
-        ),
-    };
+    let (normal_w, normal_h, expanded_w, expanded_h) = plugin_window_sizes();
 
     let ui = RunnerWindow::new()?;
     ui.set_plugin_kind(plugin_kind.into());
     ui.set_window_title(manifest.name.clone().into());
     ui.set_window_icon(manifest.mark.clone().into());
-    let can_expand = manifest.window.resizable && plugin_kind != "time";
-    ui.set_resizable(can_expand);
-    ui.set_show_expand_button(can_expand);
+    ui.set_resizable(manifest.window.resizable);
+    ui.set_show_expand_button(true);
     ui.set_window_opacity(crate::window_prefs::load().normalized_opacity());
+    ui.set_frame_w(normal_w as i32);
+    ui.set_frame_h(normal_h as i32);
 
     // 默认小窗口：按对应插件的标准 normal_w / normal_h 显式设置初始窗口逻辑尺寸
     ui.window().set_size(slint::LogicalSize::new(normal_w as f32, normal_h as f32));
@@ -266,6 +269,14 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
             if let Some(ui) = ui_w.upgrade() {
                 let is_exp = rs.toggle_expand(ui.window(), normal_w, normal_h, expanded_w, expanded_h);
                 ui.set_is_expanded(is_exp);
+                let (fw, fh) = if is_exp {
+                    (expanded_w, expanded_h)
+                } else {
+                    (normal_w, normal_h)
+                };
+                ui.set_frame_w(fw as i32);
+                ui.set_frame_h(fh as i32);
+                ui.window().set_size(slint::LogicalSize::new(fw as f32, fh as f32));
             }
         });
     }
@@ -1785,5 +1796,15 @@ fn collect_generic_nodes(
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_window_sizes_expand_is_1_5x() {
+        assert_eq!(plugin_window_sizes(), (580, 600, 870, 900));
     }
 }

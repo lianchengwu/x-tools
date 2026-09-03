@@ -175,25 +175,24 @@ impl WindowResizeState {
         expanded_h: u32,
     ) -> bool {
         let current_size = window.size();
-        let scale = window.scale_factor();
-        let normal_phys_w = (normal_w as f32 * scale).round() as u32;
-        let normal_phys_h = (normal_h as f32 * scale).round() as u32;
-        let expanded_phys_w = (expanded_w as f32 * scale).round() as u32;
-        let expanded_phys_h = (expanded_h as f32 * scale).round() as u32;
+        let scale = window.scale_factor().max(0.01);
+        let current_w = current_size.width as f32 / scale;
+        let current_h = current_size.height as f32 / scale;
+        let tolerance = 20.0;
 
         let mut saved = self.saved_size.lock();
-        let tolerance = (20.0 * scale).round() as u32;
-        if current_size.width >= (expanded_phys_w.saturating_sub(tolerance))
-            && current_size.height >= (expanded_phys_h.saturating_sub(tolerance))
+        if current_w + tolerance >= expanded_w as f32
+            && current_h + tolerance >= expanded_h as f32
         {
-            let target = saved
-                .take()
-                .unwrap_or(slint::PhysicalSize::new(normal_phys_w, normal_phys_h));
-            window.set_size(target);
+            if let Some(target) = saved.take() {
+                window.set_size(target);
+            } else {
+                window.set_size(slint::LogicalSize::new(normal_w as f32, normal_h as f32));
+            }
             false
         } else {
             *saved = Some(current_size);
-            window.set_size(slint::PhysicalSize::new(expanded_phys_w, expanded_phys_h));
+            window.set_size(slint::LogicalSize::new(expanded_w as f32, expanded_h as f32));
             true
         }
     }
