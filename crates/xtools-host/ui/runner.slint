@@ -172,7 +172,7 @@ export component RunnerWindow inherits Window {
 
     in-out property <string> window-title: "xtools";
     in-out property <string> window-icon: "⚡";
-    in-out property <string> plugin-kind: ""; // "time", "json", "trans", "generic"
+    in-out property <string> plugin-kind: ""; // "time", "json", "trans", "ai", "codec", "generic"
     in-out property <bool> resizable: true;
     in-out property <bool> show-expand-button: true;
     in-out property <bool> is-expanded: false;
@@ -326,6 +326,25 @@ export component RunnerWindow inherits Window {
     callback trans-engine-changed(int);
 
     // -------------------------------------------------------------------------
+    // Codec Plugin State & Callbacks
+    // -------------------------------------------------------------------------
+    in-out property <string> codec-input: "";
+    in-out property <string> codec-output: "";
+    in-out property <int> codec-kind-index: 0;
+    in-out property <[string]> codec-options: ["Unicode", "UTF-8", "URL", "Hex", "Base64", "大小写"];
+    in-out property <bool> codec-copied: false;
+    in-out property <string> codec-error: "";
+    in-out property <string> codec-status: "Unicode：文本 ↔ \\uXXXX";
+
+    callback codec-encode();
+    callback codec-decode();
+    callback codec-swap();
+    callback codec-clear();
+    callback codec-copy();
+    callback codec-input-edited(string);
+    callback codec-kind-changed(int);
+
+    // -------------------------------------------------------------------------
     // Host Settings View State (tray → 设置)
     // -------------------------------------------------------------------------
     in-out property <string> settings-baidu-appid: "";
@@ -390,6 +409,10 @@ export component RunnerWindow inherits Window {
                 }
                 if (root.plugin-kind == "json") {
                     root.json-format();
+                    return accept;
+                }
+                if (root.plugin-kind == "codec") {
+                    root.codec-encode();
                     return accept;
                 }
                 if (root.plugin-kind == "ai") {
@@ -1293,6 +1316,137 @@ export component RunnerWindow inherits Window {
                         copied: root.trans-copied;
                         enabled: root.trans-target != "";
                         clicked => { root.trans-copy(); }
+                    }
+                }
+            }
+
+            // =================================================================
+            // 3b. CODEC PLUGIN VIEW
+            // =================================================================
+            if root.plugin-kind == "codec" : VerticalLayout {
+                spacing: 8px;
+                alignment: stretch;
+                vertical-stretch: 1;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: space-between;
+
+                    Text {
+                        text: "输入";
+                        font-size: Theme.font-size-small;
+                        font-weight: 600;
+                        color: Theme.muted;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        border-radius: Theme.radius-control;
+                        background: Theme.secondary-hover;
+                        height: 32px;
+                        horizontal-stretch: 1;
+
+                        HorizontalLayout {
+                            padding: 2px;
+                            spacing: 2px;
+
+                            for label[idx] in root.codec-options : Rectangle {
+                                border-radius: Theme.radius-control - 2px;
+                                background: root.codec-kind-index == idx ? Theme.card-bg : Colors.transparent;
+                                horizontal-stretch: 1;
+
+                                HorizontalLayout {
+                                    padding-left: 4px;
+                                    padding-right: 4px;
+                                    alignment: center;
+
+                                    Text {
+                                        text: label;
+                                        font-size: Theme.font-size-small;
+                                        font-weight: root.codec-kind-index == idx ? 600 : 500;
+                                        color: root.codec-kind-index == idx ? Theme.foreground : Theme.muted;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: center;
+                                    }
+                                }
+
+                                TouchArea {
+                                    clicked => { root.codec-kind-changed(idx); }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                MultilineEditor {
+                    text <=> root.codec-input;
+                    vertical-stretch: 1;
+                    edited(t) => { root.codec-input-edited(t); }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: stretch;
+
+                    ActionButton {
+                        text: root.codec-kind-index == 5 ? "大写" : "编码";
+                        is-primary: true;
+                        enabled: root.codec-input != "";
+                        clicked => { root.codec-encode(); }
+                    }
+
+                    ActionButton {
+                        text: root.codec-kind-index == 5 ? "小写" : "解码";
+                        enabled: root.codec-input != "";
+                        clicked => { root.codec-decode(); }
+                    }
+
+                    IconButton {
+                        icon: "⇄";
+                        clicked => { root.codec-swap(); }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                }
+
+                Text {
+                    text: "输出";
+                    font-size: Theme.font-size-small;
+                    font-weight: 600;
+                    color: Theme.muted;
+                }
+
+                MultilineEditor {
+                    text <=> root.codec-output;
+                    vertical-stretch: 1;
+                    read-only: true;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: stretch;
+
+                    if root.codec-error != "" : InlineError {
+                        error-text: root.codec-error;
+                        horizontal-stretch: 1;
+                    }
+
+                    if root.codec-error == "" : InlineNote {
+                        text: root.codec-status;
+                        horizontal-stretch: 1;
+                    }
+
+                    ActionButton {
+                        text: "🗑 清空";
+                        clicked => { root.codec-clear(); }
+                    }
+
+                    CopyButton {
+                        copied: root.codec-copied;
+                        enabled: root.codec-output != "";
+                        clicked => { root.codec-copy(); }
                     }
                 }
             }

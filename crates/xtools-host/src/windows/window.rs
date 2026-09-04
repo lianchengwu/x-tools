@@ -197,7 +197,7 @@ impl HostWindow {
         host
     }
 
-    /// 扫描插件目录（可执行文件旁 plugins/ 等），空目录时回落到内置四项
+    /// 扫描插件目录（可执行文件旁 plugins/ 等），空目录时回落到内置五项
     pub fn reload_plugins(&mut self) {
         let loader = PluginLoader::new();
         let mut discovered: Vec<DiscoveredPlugin> = Vec::new();
@@ -218,6 +218,7 @@ impl HostWindow {
                 ("json", "xtools.json", "JSON 格式化", "{}"),
                 ("trans", "xtools.trans", "划词翻译", "文"),
                 ("ai", "xtools.ai", "AI 问答", "智"),
+                ("codec", "xtools.codec", "编码解码", "码"),
             ];
             for (short, id, name, mark) in fallback {
                 discovered.push(DiscoveredPlugin {

@@ -170,6 +170,20 @@ impl Host {
                         permissions: vec![],
                     },
                 },
+                DiscoveredPlugin {
+                    path: PathBuf::from("codec.wasm"),
+                    manifest: PluginManifest {
+                        id: "xtools.codec".into(),
+                        name: "编码解码".into(),
+                        version: "0.4.0".into(),
+                        description: "".into(),
+                        author: "".into(),
+                        mark: "码".into(),
+                        icon_svg: None,
+                        window: Default::default(),
+                        permissions: vec![],
+                    },
+                },
             ];
         }
 

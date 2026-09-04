@@ -36,6 +36,7 @@
 | 🕒 | **`xtools.time`** 时间戳转换 | Unix 秒 / 毫秒时间戳与日期时间双向转换 | • 三栏联动实时换算<br/>• 多时区切换<br/>• 一键复制结果 |
 | {} | **`xtools.json`** JSON 格式化与校验 | JSON 工具集 | • 格式化 / 压缩 / 去转义 / 校验<br/>• 树形折叠浏览（展开 / 折叠 / 按层折叠）<br/>• 精确行列号错误定位 |
 | 文 | **`xtools.trans`** 智能翻译 | 多语言文本翻译 | • 双引擎：MyMemory（免密钥）/ 百度翻译 API<br/>• 语种互换、配置持久化<br/>• 划词粘贴即译<br/>• 百度密钥在托盘「设置」中配置 |
+| 码 | **`xtools.codec`** 编码解码 | Unicode / UTF-8 / URL / Hex / Base64 与大小写 | • 六种格式一键编码 / 解码<br/>• Unicode `\uXXXX`、UTF-8 `\xHH`、URL 百分号、Hex、Base64<br/>• 大小写转换（大写 / 小写）<br/>• 输入输出互换、一键复制 |
 | 智 | **`xtools.ai`** AI 问答 | 基于 OpenAI 兼容接口的多轮 AI 对话 | • 打开自动填入剪贴板内容，手动点击发送<br/>• 聊天气泡界面，支持多轮上下文与历史恢复<br/>• 接口在托盘「设置」中统一配置 |
 
 ## 🏗️ 架构设计
@@ -73,7 +74,7 @@
 | `crates/xtools-ui` | lib | 共享 UI 基建：Slint 主题 token 与通用组件、无边框窗口 chrome、单例 IPC、托盘、输入法引导 |
 | `crates/xtools-runtime` | lib | wasmtime 运行时：插件发现（`PluginLoader`）、实例生命周期（`PluginInstance`）、宿主函数注入与权限守卫、插件级存储 |
 | `crates/xtools-host` | bin `xtools` | 悬浮球宿主（包名 `xtools-wasm`）：轨道菜单动画、内置 runner（`xtools run`，加载 WASM 并双向同步 UI 视图与事件）、系统托盘 |
-| `plugins/xtools-plugin-*` | cdylib | 官方插件：time / json / trans / ai，编译为 `.wasm` |
+| `plugins/xtools-plugin-*` | cdylib | 官方插件：time / json / trans / ai / codec，编译为 `.wasm` |
 
 ## 🚀 快速开始
 
@@ -102,7 +103,7 @@ cargo build --release
 
 # 2. 构建全部官方插件（WASM）
 cargo build --target wasm32-unknown-unknown --release \
-    -p xtools-plugin-time -p xtools-plugin-json -p xtools-plugin-trans
+    -p xtools-plugin-time -p xtools-plugin-json -p xtools-plugin-trans -p xtools-plugin-ai -p xtools-plugin-codec
 
 # 3. 组装便携目录（可选）
 mkdir -p dist/plugins

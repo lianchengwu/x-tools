@@ -7443,6 +7443,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "xtools-plugin-codec"
+version = "0.5.32"
+dependencies = [
+ "serde",
+ "serde_json",
+ "xtools-sdk",
+]
+
+[[package]]
 name = "xtools-plugin-json"
 version = "0.5.32"
 dependencies = [

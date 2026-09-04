@@ -67,6 +67,7 @@ jobs:
           -p xtools-plugin-json
           -p xtools-plugin-trans
           -p xtools-plugin-ai
+          -p xtools-plugin-codec
 
       - name: Test xtools-protocol
         run: cargo test -p xtools-protocol
@@ -90,6 +91,7 @@ jobs:
           -p xtools-plugin-json
           -p xtools-plugin-trans
           -p xtools-plugin-ai
+          -p xtools-plugin-codec
 
       - name: Smoke Test Plugin Discovery
         run: |
@@ -120,6 +122,7 @@ jobs:
           -p xtools-plugin-json
           -p xtools-plugin-trans
           -p xtools-plugin-ai
+          -p xtools-plugin-codec
 
       - name: Test xtools-protocol / sdk / ui
         run: >
@@ -153,6 +156,7 @@ jobs:
           cargo test --no-fail-fast
           -p xtools-plugin-time -p xtools-plugin-json
           -p xtools-plugin-trans -p xtools-plugin-ai
+          -p xtools-plugin-codec
 
       - name: Build All Binaries
         run: cargo build --workspace --release
@@ -165,6 +169,7 @@ jobs:
           Copy-Item target/wasm32-unknown-unknown/release/xtools_plugin_json.wasm  target/release/plugins/json.wasm
           Copy-Item target/wasm32-unknown-unknown/release/xtools_plugin_trans.wasm target/release/plugins/trans.wasm
           Copy-Item target/wasm32-unknown-unknown/release/xtools_plugin_ai.wasm    target/release/plugins/ai.wasm
+          Copy-Item target/wasm32-unknown-unknown/release/xtools_plugin_codec.wasm target/release/plugins/codec.wasm
 
       - name: Smoke Test Windows Singleton (Host Orb & Tray)
         shell: pwsh

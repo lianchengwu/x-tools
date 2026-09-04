@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 
 log() { printf '\033[1;36m[build]\033[0m %s\n' "$*"; }
 
-PLUGINS=(xtools-plugin-time xtools-plugin-json xtools-plugin-trans xtools-plugin-ai)
+PLUGINS=(xtools-plugin-time xtools-plugin-json xtools-plugin-trans xtools-plugin-ai xtools-plugin-codec)
 
 if [[ "${1:-}" == "--test" ]]; then
     log "运行全部测试..."
@@ -20,7 +20,7 @@ cargo build --release
 
 log "构建 WASM 插件 (wasm32-unknown-unknown, release)..."
 cargo build --target wasm32-unknown-unknown --release \
-    -p xtools-plugin-time -p xtools-plugin-json -p xtools-plugin-trans -p xtools-plugin-ai
+    -p xtools-plugin-time -p xtools-plugin-json -p xtools-plugin-trans -p xtools-plugin-ai -p xtools-plugin-codec
 
 log "组装 dist/ 便携目录..."
 mkdir -p dist/plugins

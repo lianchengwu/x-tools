@@ -161,6 +161,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         "xtools.time" => "time",
         "xtools.json" => "json",
         "xtools.trans" => "trans",
+        "xtools.codec" => "codec",
         "xtools.ai" => "ai",
         _ => "generic",
     };
@@ -942,6 +943,79 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Wire Codec Plugin Callbacks
+    if plugin_kind == "codec" {
+        {
+            let h = handle_event.clone();
+            ui.on_codec_encode(move || {
+                h(UiEvent::Click {
+                    id: "btn_encode".to_string(),
+                });
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_codec_decode(move || {
+                h(UiEvent::Click {
+                    id: "btn_decode".to_string(),
+                });
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_codec_swap(move || {
+                h(UiEvent::Click {
+                    id: "btn_swap".to_string(),
+                });
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_codec_clear(move || {
+                h(UiEvent::Click {
+                    id: "btn_clear".to_string(),
+                });
+            });
+        }
+        {
+            let h = handle_event.clone();
+            let ui_w = ui.as_weak();
+            ui.on_codec_copy(move || {
+                h(UiEvent::Click {
+                    id: "btn_copy".to_string(),
+                });
+                if let Some(u) = ui_w.upgrade() {
+                    u.set_codec_copied(true);
+                    let ui_reset = ui_w.clone();
+                    slint::Timer::single_shot(Duration::from_millis(1500), move || {
+                        if let Some(u) = ui_reset.upgrade() {
+                            u.set_codec_copied(false);
+                        }
+                    });
+                }
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_codec_input_edited(move |t| {
+                h(UiEvent::InputChanged {
+                    id: "input_source".to_string(),
+                    value: t.to_string(),
+                });
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_codec_kind_changed(move |idx| {
+                h(UiEvent::SelectChanged {
+                    id: "select_kind".to_string(),
+                    index: idx as usize,
+                    value: idx.to_string(),
+                });
+            });
+        }
+    }
+
     // Wire AI Plugin Callbacks
     if plugin_kind == "ai" {
         let ai_cancel = Arc::new(AtomicBool::new(false));
@@ -1221,6 +1295,7 @@ fn sync_ui_view(ui: &RunnerWindow, view: &UiView, plugin_kind: &str) {
         "time" => sync_time_view(ui, &view.root),
         "json" => sync_json_view(ui, &view.root),
         "trans" => sync_trans_view(ui, &view.root),
+        "codec" => sync_codec_view(ui, &view.root),
         "ai" => sync_ai_view(ui, &view.root),
         _ => sync_generic_view(ui, &view.root),
     }
@@ -1529,6 +1604,80 @@ fn collect_trans_nodes(
             } else if (*variant == LabelVariant::Secondary || *variant == LabelVariant::Muted)
                 && (t.contains("引擎") || t.contains("翻译"))
             {
+                *status_text = t.clone();
+            }
+        }
+        _ => {}
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Codec Plugin View Sync
+// -----------------------------------------------------------------------------
+fn sync_codec_view(ui: &RunnerWindow, root: &UiNode) {
+    let mut source = None;
+    let mut target = None;
+    let mut kind_idx = 0;
+    let mut error_text = String::new();
+    let mut status_text = String::new();
+
+    collect_codec_nodes(
+        root,
+        &mut source,
+        &mut target,
+        &mut kind_idx,
+        &mut error_text,
+        &mut status_text,
+    );
+
+    if let Some(s) = source {
+        ui.set_codec_input(s.into());
+    }
+    if let Some(t) = target {
+        ui.set_codec_output(t.into());
+    }
+    ui.set_codec_kind_index(kind_idx as i32);
+    ui.set_codec_error(error_text.into());
+    if !status_text.is_empty() {
+        ui.set_codec_status(status_text.into());
+    }
+}
+
+fn collect_codec_nodes(
+    node: &UiNode,
+    source: &mut Option<String>,
+    target: &mut Option<String>,
+    kind_idx: &mut usize,
+    error_text: &mut String,
+    status_text: &mut String,
+) {
+    match node {
+        UiNode::Container { children, .. } => {
+            for child in children {
+                collect_codec_nodes(child, source, target, kind_idx, error_text, status_text);
+            }
+        }
+        UiNode::Card { children, .. } => {
+            for child in children {
+                collect_codec_nodes(child, source, target, kind_idx, error_text, status_text);
+            }
+        }
+        UiNode::TextInput { id, value, .. } => match id.as_str() {
+            "input_source" => *source = Some(value.clone()),
+            "input_target" => *target = Some(value.clone()),
+            _ => {}
+        },
+        UiNode::Select {
+            id, selected_index, ..
+        } => {
+            if id == "select_kind" {
+                *kind_idx = *selected_index;
+            }
+        }
+        UiNode::Label { text: t, variant, .. } => {
+            if *variant == LabelVariant::Error {
+                *error_text = t.clone();
+            } else if *variant == LabelVariant::Secondary || *variant == LabelVariant::Muted {
                 *status_text = t.clone();
             }
         }

@@ -1,0 +1,15 @@
+[package]
+name = "xtools-plugin-codec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Unicode / UTF-8 / URL / Hex / Base64 / case encode-decode plugin for xtools"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+xtools-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

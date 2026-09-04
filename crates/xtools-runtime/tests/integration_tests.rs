@@ -30,7 +30,8 @@ fn require_plugin_artifact(test: &str, name: &str) -> Option<PathBuf> {
 
 #[test]
 fn test_plugin_scanner_discovers_all_plugins() {
-    let Some(plugins_dir) = require_plugin_artifact("test_plugin_scanner_discovers_all_plugins", "time")
+    let Some(plugins_dir) = require_plugin_artifact("test_plugin_scanner_discovers_all_plugins", "codec")
+        .or_else(|| require_plugin_artifact("test_plugin_scanner_discovers_all_plugins", "time"))
         .map(|p| p.parent().unwrap().to_path_buf())
     else {
         return;
@@ -38,12 +39,17 @@ fn test_plugin_scanner_discovers_all_plugins() {
     let loader = PluginLoader::new();
     let discovered = loader.scan_dir(&plugins_dir);
 
-    assert_eq!(discovered.len(), 4, "Expected 4 plugins, found {:?}", discovered);
+    assert!(
+        discovered.len() >= 5,
+        "Expected at least 5 plugins, found {:?}",
+        discovered
+    );
 
     let ids: Vec<_> = discovered.iter().map(|p| p.manifest.id.as_str()).collect();
     assert!(ids.contains(&"xtools.time"));
     assert!(ids.contains(&"xtools.json"));
     assert!(ids.contains(&"xtools.trans"));
+    assert!(ids.contains(&"xtools.codec"));
 
     let time_p = discovered.iter().find(|p| p.manifest.id == "xtools.time").unwrap();
     assert_eq!(time_p.manifest.name, "时间戳转换");
@@ -60,6 +66,10 @@ fn test_plugin_scanner_discovers_all_plugins() {
     let ai_p = discovered.iter().find(|p| p.manifest.id == "xtools.ai").unwrap();
     assert_eq!(ai_p.manifest.name, "AI 问答");
     assert_eq!(ai_p.manifest.mark, "智");
+
+    let codec_p = discovered.iter().find(|p| p.manifest.id == "xtools.codec").unwrap();
+    assert_eq!(codec_p.manifest.name, "编码解码");
+    assert_eq!(codec_p.manifest.mark, "码");
 }
 
 #[test]
@@ -172,6 +182,79 @@ fn test_json_plugin_lifecycle_and_formatting() {
     if let UiResponse::UpdateView(view) = resp_bad {
         let serialized = serde_json::to_string(&view).unwrap();
         assert!(serialized.contains("第 1 行") || serialized.contains("Error") || serialized.contains("EOF"));
+    }
+}
+
+#[test]
+fn test_codec_plugin_lifecycle_encode_decode() {
+    let Some(path) = require_plugin_artifact("test_codec_plugin_lifecycle_encode_decode", "codec") else {
+        return;
+    };
+    let loader = PluginLoader::new();
+    let mut instance = loader.load_instance(&path).expect("Failed to load codec plugin");
+
+    let evt_input = UiEvent::InputChanged {
+        id: "input_source".to_string(),
+        value: "你好".to_string(),
+    };
+    let _ = instance.handle_event(&evt_input).expect("Failed to input codec text");
+
+    let evt_encode = UiEvent::Click { id: "btn_encode".to_string() };
+    let resp_encode = instance.handle_event(&evt_encode).expect("Failed to encode");
+    if let UiResponse::UpdateView(view) = resp_encode {
+        let serialized = serde_json::to_string(&view).unwrap();
+        assert!(
+            serialized.contains(r"\\u4f60\\u597d") || serialized.contains(r"\u4f60\u597d"),
+            "{serialized}"
+        );
+        assert!(serialized.contains("已编码"));
+    } else {
+        panic!("Expected UpdateView response");
+    }
+
+    let evt_kind = UiEvent::SelectChanged {
+        id: "select_kind".to_string(),
+        index: 4,
+        value: "4".to_string(),
+    };
+    let _ = instance.handle_event(&evt_kind).expect("Failed to switch to Base64");
+
+    let evt_b64 = UiEvent::InputChanged {
+        id: "input_source".to_string(),
+        value: "hello".to_string(),
+    };
+    let _ = instance.handle_event(&evt_b64).expect("Failed to input base64 text");
+    let resp_b64 = instance
+        .handle_event(&UiEvent::Click { id: "btn_encode".to_string() })
+        .expect("Failed to encode base64");
+    if let UiResponse::UpdateView(view) = resp_b64 {
+        let serialized = serde_json::to_string(&view).unwrap();
+        assert!(serialized.contains("aGVsbG8="), "{serialized}");
+    } else {
+        panic!("Expected UpdateView response");
+    }
+
+    let evt_case = UiEvent::SelectChanged {
+        id: "select_kind".to_string(),
+        index: 5,
+        value: "5".to_string(),
+    };
+    let _ = instance.handle_event(&evt_case).expect("Failed to switch to case");
+    let _ = instance
+        .handle_event(&UiEvent::InputChanged {
+            id: "input_source".to_string(),
+            value: "Hello".to_string(),
+        })
+        .expect("Failed to input case text");
+    let resp_case = instance
+        .handle_event(&UiEvent::Click { id: "btn_encode".to_string() })
+        .expect("Failed to uppercase");
+    if let UiResponse::UpdateView(view) = resp_case {
+        let serialized = serde_json::to_string(&view).unwrap();
+        assert!(serialized.contains("HELLO"), "{serialized}");
+        assert!(serialized.contains("大写"), "{serialized}");
+    } else {
+        panic!("Expected UpdateView response");
     }
 }
 

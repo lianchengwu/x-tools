@@ -281,7 +281,7 @@ pub fn draw_main(surface: &mut Surface, cx: f64, cy: f64, scale: f64) {
     }
 }
 
-/// Draw a function ball identified by its manifest mark (clock / {} / 文 / 智…).
+/// Draw a function ball identified by its manifest mark (clock / {} / 文 / 智 / 码…).
 pub fn draw_func(surface: &mut Surface, mark: &str, cx: f64, cy: f64, t: f64, scale: f64) {
     if t <= 0.0 {
         return;
@@ -303,6 +303,7 @@ pub fn draw_func(surface: &mut Surface, mark: &str, cx: f64, cy: f64, t: f64, sc
         "clock" => draw_clock(surface, cx, cy, fr, color),
         "{}" => draw_json_mark(surface, cx, cy, scale, color),
         "文" => draw_trans_mark(surface, cx, cy, scale, color),
+        "码" => draw_codec_mark(surface, cx, cy, scale, color),
         // AI 问答等其余工具：四角星光标
         _ => draw_ai_mark(surface, cx, cy, scale, color),
     }
@@ -345,6 +346,20 @@ fn draw_trans_mark(surface: &mut Surface, cx: f64, cy: f64, scale: f64, color: C
     surface.draw_line(cx + 1.5 * s, cy - 2.0 * s, cx - 5.5 * s, cy + 6.0 * s, stroke, color);
     // Right diagonal sweep: '捺'
     surface.draw_line(cx - 1.5 * s, cy - 2.0 * s, cx + 5.5 * s, cy + 6.0 * s, stroke, color);
+}
+
+/// Draw stacked encode/decode arrows for the codec tool (mark "码").
+fn draw_codec_mark(surface: &mut Surface, cx: f64, cy: f64, scale: f64, color: Color) {
+    let s = 1.0 * scale;
+    let stroke = (1.5 * scale).max(1.0);
+
+    surface.draw_line(cx - 6.0 * s, cy - 2.6 * s, cx + 6.0 * s, cy - 2.6 * s, stroke, color);
+    surface.draw_line(cx + 2.8 * s, cy - 5.2 * s, cx + 6.0 * s, cy - 2.6 * s, stroke, color);
+    surface.draw_line(cx + 2.8 * s, cy + 0.0 * s, cx + 6.0 * s, cy - 2.6 * s, stroke, color);
+
+    surface.draw_line(cx + 6.0 * s, cy + 2.6 * s, cx - 6.0 * s, cy + 2.6 * s, stroke, color);
+    surface.draw_line(cx - 2.8 * s, cy + 0.0 * s, cx - 6.0 * s, cy + 2.6 * s, stroke, color);
+    surface.draw_line(cx - 2.8 * s, cy + 5.2 * s, cx - 6.0 * s, cy + 2.6 * s, stroke, color);
 }
 
 /// Draw a four-point sparkle mark for the AI tool (fallback for unknown marks).
@@ -405,7 +420,7 @@ mod tests {
     #[test]
     fn draw_func_renders_all_marks() {
         let mut surface = Surface::new(200, 200);
-        for mark in ["clock", "{}", "文", "智", "unknown-fallback"] {
+        for mark in ["clock", "{}", "文", "智", "码", "unknown-fallback"] {
             surface.clear();
             draw_func(&mut surface, mark, 100.0, 100.0, 1.0, 1.0);
             let center_idx = 100 * 200 + 100;
