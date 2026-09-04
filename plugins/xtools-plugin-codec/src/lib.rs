@@ -60,7 +60,7 @@ impl XPlugin for CodecPlugin {
         let mut children = Vec::new();
 
         children.push(row(vec![
-            label("输入"),
+            label("输入 (Input)"),
             spacer(),
             select("select_kind", kind_options, self.kind_index),
         ]));
@@ -84,7 +84,7 @@ impl XPlugin for CodecPlugin {
             spacer(),
         ]));
 
-        children.push(label("输出"));
+        children.push(label("输出 (Output)"));
         children.push(UiNode::TextInput {
             id: "input_target".to_string(),
             label: None,

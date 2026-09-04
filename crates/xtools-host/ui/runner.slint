@@ -1328,53 +1328,64 @@ export component RunnerWindow inherits Window {
                 alignment: stretch;
                 vertical-stretch: 1;
 
+                // 1. 顶部 6 种编码模式分段控制导航
+                Rectangle {
+                    border-radius: Theme.radius-control;
+                    background: Theme.secondary-hover;
+                    height: 34px;
+
+                    HorizontalLayout {
+                        padding: 3px;
+                        spacing: 3px;
+
+                        for label[idx] in root.codec-options : Rectangle {
+                            border-radius: Theme.radius-control - 2px;
+                            background: root.codec-kind-index == idx
+                                ? Theme.card-bg
+                                : (item-touch.has-hover ? Theme.secondary : Colors.transparent);
+                            border-width: root.codec-kind-index == idx ? 1px : 0px;
+                            border-color: root.codec-kind-index == idx ? Theme.border-subtle : Colors.transparent;
+                            horizontal-stretch: 1;
+
+                            animate background { duration: 120ms; }
+
+                            HorizontalLayout {
+                                alignment: center;
+                                Text {
+                                    text: label;
+                                    font-size: Theme.font-size-small;
+                                    font-weight: root.codec-kind-index == idx ? 600 : 500;
+                                    color: root.codec-kind-index == idx
+                                        ? Theme.primary
+                                        : (item-touch.has-hover ? Theme.foreground : Theme.muted);
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            item-touch := TouchArea {
+                                clicked => { root.codec-kind-changed(idx); }
+                            }
+                        }
+                    }
+                }
+
+                // 2. 输入区标题与快捷键提示
                 HorizontalLayout {
-                    spacing: 8px;
                     alignment: space-between;
 
                     Text {
-                        text: "输入";
+                        text: "输入 (Input)";
                         font-size: Theme.font-size-small;
                         font-weight: 600;
                         color: Theme.muted;
                         vertical-alignment: center;
                     }
 
-                    Rectangle {
-                        border-radius: Theme.radius-control;
-                        background: Theme.secondary-hover;
-                        height: 32px;
-                        horizontal-stretch: 1;
-
-                        HorizontalLayout {
-                            padding: 2px;
-                            spacing: 2px;
-
-                            for label[idx] in root.codec-options : Rectangle {
-                                border-radius: Theme.radius-control - 2px;
-                                background: root.codec-kind-index == idx ? Theme.card-bg : Colors.transparent;
-                                horizontal-stretch: 1;
-
-                                HorizontalLayout {
-                                    padding-left: 4px;
-                                    padding-right: 4px;
-                                    alignment: center;
-
-                                    Text {
-                                        text: label;
-                                        font-size: Theme.font-size-small;
-                                        font-weight: root.codec-kind-index == idx ? 600 : 500;
-                                        color: root.codec-kind-index == idx ? Theme.foreground : Theme.muted;
-                                        vertical-alignment: center;
-                                        horizontal-alignment: center;
-                                    }
-                                }
-
-                                TouchArea {
-                                    clicked => { root.codec-kind-changed(idx); }
-                                }
-                            }
-                        }
+                    Text {
+                        text: "Ctrl+Enter 快捷转换";
+                        font-size: 11px;
+                        color: Theme.muted;
+                        vertical-alignment: center;
                     }
                 }
 
@@ -1384,25 +1395,29 @@ export component RunnerWindow inherits Window {
                     edited(t) => { root.codec-input-edited(t); }
                 }
 
+                // 3. 转换动作条
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: stretch;
 
                     ActionButton {
-                        text: root.codec-kind-index == 5 ? "大写" : "编码";
+                        text: root.codec-kind-index == 5 ? "大写" : "⚡ 编码";
                         is-primary: true;
+                        min-btn-width: 76px;
                         enabled: root.codec-input != "";
                         clicked => { root.codec-encode(); }
                     }
 
                     ActionButton {
-                        text: root.codec-kind-index == 5 ? "小写" : "解码";
+                        text: root.codec-kind-index == 5 ? "小写" : "🔓 解码";
+                        min-btn-width: 76px;
                         enabled: root.codec-input != "";
                         clicked => { root.codec-decode(); }
                     }
 
                     IconButton {
                         icon: "⇄";
+                        enabled: root.codec-input != "" || root.codec-output != "";
                         clicked => { root.codec-swap(); }
                     }
 
@@ -1411,13 +1426,14 @@ export component RunnerWindow inherits Window {
                     }
                 }
 
+                // 4. 输出区标题
                 Text {
-                    text: "输出";
+                    text: "输出 (Output)";
                     font-size: Theme.font-size-small;
                     font-weight: 600;
                     color: Theme.muted;
+                    vertical-alignment: center;
                 }
-
                 MultilineEditor {
                     text <=> root.codec-output;
                     vertical-stretch: 1;
