@@ -7434,7 +7434,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtools-plugin-ai"
-version = "0.5.32"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7444,7 +7444,7 @@ dependencies = [
 
 [[package]]
 name = "xtools-plugin-codec"
-version = "0.5.32"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7453,7 +7453,7 @@ dependencies = [
 
 [[package]]
 name = "xtools-plugin-json"
-version = "0.5.32"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7462,7 +7462,7 @@ dependencies = [
 
 [[package]]
 name = "xtools-plugin-time"
-version = "0.5.32"
+version = "0.7.0"
 dependencies = [
  "jiff",
  "serde",
@@ -7472,7 +7472,7 @@ dependencies = [
 
 [[package]]
 name = "xtools-plugin-trans"
-version = "0.5.32"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7482,7 +7482,7 @@ dependencies = [
 
 [[package]]
 name = "xtools-protocol"
-version = "0.5.32"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7490,7 +7490,7 @@ dependencies = [
 
 [[package]]
 name = "xtools-runtime"
-version = "0.5.32"
+version = "0.7.0"
 dependencies = [
  "arboard",
  "dirs",
@@ -7507,7 +7507,7 @@ dependencies = [
 
 [[package]]
 name = "xtools-sdk"
-version = "0.5.32"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7516,7 +7516,7 @@ dependencies = [
 
 [[package]]
 name = "xtools-ui"
-version = "0.5.32"
+version = "0.7.0"
 dependencies = [
  "arboard",
  "i-slint-backend-winit",
@@ -7530,7 +7530,7 @@ dependencies = [
 
 [[package]]
 name = "xtools-wasm"
-version = "0.5.32"
+version = "0.7.0"
 dependencies = [
  "dirs",
  "env_logger",

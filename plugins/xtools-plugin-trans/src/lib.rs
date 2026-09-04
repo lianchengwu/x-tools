@@ -23,7 +23,7 @@ impl XPlugin for TransPlugin {
         PluginManifest {
             id: "xtools.trans".to_string(),
             name: "智能翻译".to_string(),
-            version: "0.5.0".to_string(),
+            version: "0.7.0".to_string(),
             description: "支持 MyMemory (免密钥) 与百度翻译 API 的即时划词与多语言翻译工具".to_string(),
             author: "xtools".to_string(),
             mark: "文".to_string(),

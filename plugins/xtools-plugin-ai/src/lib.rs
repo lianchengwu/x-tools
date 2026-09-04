@@ -161,7 +161,7 @@ impl XPlugin for AiPlugin {
         PluginManifest {
             id: "xtools.ai".to_string(),
             name: "AI 问答".to_string(),
-            version: "0.5.0".to_string(),
+            version: "0.7.0".to_string(),
             description: "基于 OpenAI 兼容接口的多轮 AI 对话工具，打开时自动填入剪贴板内容".to_string(),
             author: "xtools".to_string(),
             mark: "智".to_string(),

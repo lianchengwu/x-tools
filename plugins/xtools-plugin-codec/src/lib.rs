@@ -24,7 +24,7 @@ impl XPlugin for CodecPlugin {
         PluginManifest {
             id: "xtools.codec".to_string(),
             name: "编码解码".to_string(),
-            version: "0.5.0".to_string(),
+            version: "0.7.0".to_string(),
             description: "Unicode、UTF-8、URL、Hex、Base64 编解码与大小写转换".to_string(),
             author: "xtools".to_string(),
             mark: "码".to_string(),
