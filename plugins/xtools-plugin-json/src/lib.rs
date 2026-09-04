@@ -27,7 +27,7 @@ impl XPlugin for JsonPlugin {
             mark: "{}".to_string(),
             icon_svg: None,
             window: WindowConfig {
-                width: 580,
+                width: 725,
                 height: 600,
                 resizable: true,
                 title: Some("JSON 格式化与校验".to_string()),

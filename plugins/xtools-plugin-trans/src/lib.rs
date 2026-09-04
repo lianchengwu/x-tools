@@ -29,7 +29,7 @@ impl XPlugin for TransPlugin {
             mark: "文".to_string(),
             icon_svg: None,
             window: WindowConfig {
-                width: 580,
+                width: 725,
                 height: 600,
                 resizable: true,
                 title: Some("智能翻译".to_string()),

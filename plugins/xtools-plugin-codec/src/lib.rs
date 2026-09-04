@@ -30,7 +30,7 @@ impl XPlugin for CodecPlugin {
             mark: "码".to_string(),
             icon_svg: None,
             window: WindowConfig {
-                width: 580,
+                width: 725,
                 height: 600,
                 resizable: true,
                 title: Some("编码解码".to_string()),

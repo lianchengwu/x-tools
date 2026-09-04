@@ -164,7 +164,7 @@ export component RunnerWindow inherits Window {
     default-font-family: "Microsoft YaHei, Segoe UI, PingFang SC, Noto Sans CJK SC, sans-serif";
     min-width: 420px;
     min-height: 320px;
-    // 由宿主按 580×600 / 1.5x expanded 写入，避免 preferred 把宽度钉死
+    // 由宿主按 580/725×600 / 1.5x expanded 写入，避免 preferred 把宽度钉死
     in-out property <int> frame-w: 580;
     in-out property <int> frame-h: 600;
     preferred-width: root.frame-w * 1px;

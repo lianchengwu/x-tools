@@ -117,13 +117,19 @@ fn show_toast(ui_weak: slint::Weak<RunnerWindow>, message: &str, is_success: boo
 
 const EXPAND_SCALE: f32 = 1.5;
 const TOOL_WINDOW_W: u32 = 580;
+const TOOL_WINDOW_W_WIDE: u32 = 725; // 580 * 1.25 = 725 (除时间戳工具外，其余工具宽度放大 1/4)
 const TOOL_WINDOW_H: u32 = 600;
 
-fn plugin_window_sizes() -> (u32, u32, u32, u32) {
+fn plugin_window_sizes(plugin_kind: &str) -> (u32, u32, u32, u32) {
+    let width = if plugin_kind == "time" {
+        TOOL_WINDOW_W
+    } else {
+        TOOL_WINDOW_W_WIDE
+    };
     (
-        TOOL_WINDOW_W,
+        width,
         TOOL_WINDOW_H,
-        (TOOL_WINDOW_W as f32 * EXPAND_SCALE).round() as u32,
+        (width as f32 * EXPAND_SCALE).round() as u32,
         (TOOL_WINDOW_H as f32 * EXPAND_SCALE).round() as u32,
     )
 }
@@ -198,7 +204,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
     instance.init()?;
     let initial_view = instance.render()?;
 
-    let (normal_w, normal_h, expanded_w, expanded_h) = plugin_window_sizes();
+    let (normal_w, normal_h, expanded_w, expanded_h) = plugin_window_sizes(plugin_kind);
 
     let ui = RunnerWindow::new()?;
     ui.set_plugin_kind(plugin_kind.into());
@@ -1954,6 +1960,11 @@ mod tests {
 
     #[test]
     fn plugin_window_sizes_expand_is_1_5x() {
-        assert_eq!(plugin_window_sizes(), (580, 600, 870, 900));
+        assert_eq!(plugin_window_sizes("time"), (580, 600, 870, 900));
+        assert_eq!(plugin_window_sizes("codec"), (725, 600, 1088, 900));
+        assert_eq!(plugin_window_sizes("json"), (725, 600, 1088, 900));
+        assert_eq!(plugin_window_sizes("trans"), (725, 600, 1088, 900));
+        assert_eq!(plugin_window_sizes("ai"), (725, 600, 1088, 900));
+        assert_eq!(plugin_window_sizes("generic"), (725, 600, 1088, 900));
     }
 }

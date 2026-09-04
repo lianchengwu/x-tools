@@ -167,7 +167,7 @@ impl XPlugin for AiPlugin {
             mark: "智".to_string(),
             icon_svg: None,
             window: WindowConfig {
-                width: 580,
+                width: 725,
                 height: 600,
                 resizable: true,
                 title: Some("AI 问答".to_string()),
