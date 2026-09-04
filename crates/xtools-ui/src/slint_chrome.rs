@@ -104,6 +104,7 @@ impl WindowDragState {
 pub struct WindowResizeState {
     start_size: Arc<Mutex<Option<slint::PhysicalSize>>>,
     saved_size: Arc<Mutex<Option<slint::PhysicalSize>>>,
+    is_expanded: Arc<Mutex<bool>>,
     is_native_resize: Arc<Mutex<bool>>,
 }
 
@@ -112,6 +113,7 @@ impl WindowResizeState {
         Self {
             start_size: Arc::new(Mutex::new(None)),
             saved_size: Arc::new(Mutex::new(None)),
+            is_expanded: Arc::new(Mutex::new(false)),
             is_native_resize: Arc::new(Mutex::new(false)),
         }
     }
@@ -145,6 +147,8 @@ impl WindowResizeState {
             *self.start_size.lock() = None;
         } else {
             win_debug("manual resize (wayland or fallback)");
+            *self.is_expanded.lock() = false;
+            *self.saved_size.lock() = None;
             let size = window.size();
             *self.start_size.lock() = Some(size);
         }
@@ -166,6 +170,14 @@ impl WindowResizeState {
             window.set_size(slint::PhysicalSize::new(new_w, new_h));
         }
     }
+    pub fn is_expanded(&self) -> bool {
+        *self.is_expanded.lock()
+    }
+
+    pub fn set_expanded(&self, val: bool) {
+        *self.is_expanded.lock() = val;
+    }
+
     pub fn toggle_expand(
         &self,
         window: &slint::Window,
@@ -180,10 +192,15 @@ impl WindowResizeState {
         let current_h = current_size.height as f32 / scale;
         let tolerance = 20.0;
 
+        let mut is_expanded = self.is_expanded.lock();
         let mut saved = self.saved_size.lock();
-        if current_w + tolerance >= expanded_w as f32
-            && current_h + tolerance >= expanded_h as f32
-        {
+
+        let should_restore = *is_expanded
+            || saved.is_some()
+            || (current_w + tolerance >= expanded_w as f32 && current_h + tolerance >= expanded_h as f32);
+
+        if should_restore {
+            *is_expanded = false;
             if let Some(target) = saved.take() {
                 window.set_size(target);
             } else {
@@ -191,6 +208,7 @@ impl WindowResizeState {
             }
             false
         } else {
+            *is_expanded = true;
             *saved = Some(current_size);
             window.set_size(slint::LogicalSize::new(expanded_w as f32, expanded_h as f32));
             true
@@ -318,5 +336,9 @@ mod tests {
         assert!(exp);
         let restored = resize.toggle_expand(win.window(), 100, 100, 200, 200);
         assert!(!restored);
+        let exp2 = resize.toggle_expand(win.window(), 100, 100, 200, 200);
+        assert!(exp2);
+        let restored2 = resize.toggle_expand(win.window(), 100, 100, 200, 200);
+        assert!(!restored2);
     }
 }

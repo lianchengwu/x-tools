@@ -265,6 +265,8 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         let ui_w = ui.as_weak();
         ui.on_window_resized(move |dx, dy| {
             if let Some(ui) = ui_w.upgrade() {
+                ui.set_is_expanded(false);
+                rs.set_expanded(false);
                 rs.on_resized(ui.window(), dx, dy, 420, 320);
             }
         });
@@ -274,6 +276,9 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         let ui_w = ui.as_weak();
         ui.on_expand_clicked(move || {
             if let Some(ui) = ui_w.upgrade() {
+                if ui.get_is_expanded() {
+                    rs.set_expanded(true);
+                }
                 let is_exp = rs.toggle_expand(ui.window(), normal_w, normal_h, expanded_w, expanded_h);
                 ui.set_is_expanded(is_exp);
                 let (fw, fh) = if is_exp {
