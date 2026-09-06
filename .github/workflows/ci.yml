@@ -170,7 +170,7 @@ jobs:
           Copy-Item target/wasm32-unknown-unknown/release/xtools_plugin_trans.wasm target/release/plugins/trans.wasm
           Copy-Item target/wasm32-unknown-unknown/release/xtools_plugin_ai.wasm    target/release/plugins/ai.wasm
           Copy-Item target/wasm32-unknown-unknown/release/xtools_plugin_codec.wasm target/release/plugins/codec.wasm
-
+          Copy-Item "xtools.svg" -Destination target/release -ErrorAction SilentlyContinue
       - name: Smoke Test Windows Singleton (Host Orb & Tray)
         shell: pwsh
         env:

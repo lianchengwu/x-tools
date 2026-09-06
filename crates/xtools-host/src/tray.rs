@@ -5,6 +5,25 @@ use ksni::blocking::TrayMethods;
 use ksni::menu::{MenuItem, StandardItem};
 use ksni::{Icon, ToolTip, Tray};
 
+/// 查找图标所在目录（优先可执行文件同级目录，其次当前工作目录）
+fn find_icon_dir() -> Option<String> {
+    // 1. 可执行文件同级目录（例如在 dist/ 目录下运行）
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            if dir.join("xtools.svg").exists() || dir.join("xtools.png").exists() {
+                return Some(dir.to_string_lossy().into_owned());
+            }
+        }
+    }
+    // 2. 当前工作目录（例如在源码根目录下运行）
+    if let Ok(cwd) = std::env::current_dir() {
+        if cwd.join("xtools.svg").exists() || cwd.join("xtools.png").exists() {
+            return Some(cwd.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
 pub struct XtoolsTray {
     open: Arc<AtomicBool>,
 }
@@ -27,6 +46,10 @@ impl Tray for XtoolsTray {
         }
     }
 
+    fn icon_theme_path(&self) -> String {
+        find_icon_dir().unwrap_or_default()
+    }
+
     fn icon_name(&self) -> String {
         "xtools".into()
     }
@@ -34,7 +57,6 @@ impl Tray for XtoolsTray {
     fn icon_pixmap(&self) -> Vec<Icon> {
         Vec::new()
     }
-
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let is_open = self.open.load(Ordering::Relaxed);
         let toggle_label = if is_open { "收起悬浮球" } else { "展开悬浮球" };

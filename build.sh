@@ -25,6 +25,7 @@ cargo build --target wasm32-unknown-unknown --release \
 log "组装 dist/ 便携目录..."
 mkdir -p dist/plugins
 cp target/release/xtools dist/
+cp xtools.svg dist/
 for p in "${PLUGINS[@]}"; do
     # xtools-plugin-time -> 插件短名 time, 产物名 xtools_plugin_time.wasm
     short=${p#xtools-plugin-}

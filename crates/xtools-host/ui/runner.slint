@@ -519,27 +519,31 @@ export component RunnerWindow inherits Window {
                         }
 
                         // 右侧：切换单位 + 复制 + 暂停/继续
-                        HorizontalLayout {
-                            spacing: 8px;
-                            alignment: end;
+                        VerticalLayout {
+                            alignment: center;
 
-                            ActionButton {
-                                text: "🔄 切换单位";
-                                min-btn-width: 82px;
-                                clicked => { root.time-toggle-unit(); }
-                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: end;
 
-                            ActionButton {
-                                text: root.time-now-copied ? "✓ 已复制" : "📋 复制";
-                                min-btn-width: 72px;
-                                clicked => { root.time-copy-now(); }
-                            }
+                                ActionButton {
+                                    text: "⇄ 切换单位";
+                                    min-btn-width: 82px;
+                                    clicked => { root.time-toggle-unit(); }
+                                }
 
-                            ActionButton {
-                                variant: root.time-now-paused ? "success" : "danger";
-                                text: root.time-now-paused ? "▶ 继续" : "⏹ 暂停";
-                                min-btn-width: 72px;
-                                clicked => { root.time-toggle-pause(); }
+                                CopyButton {
+                                    copied: root.time-now-copied;
+                                    min-btn-width: 72px;
+                                    clicked => { root.time-copy-now(); }
+                                }
+
+                                ActionButton {
+                                    variant: root.time-now-paused ? "success" : "danger";
+                                    text: root.time-now-paused ? "▶ 继续" : "■ 暂停";
+                                    min-btn-width: 72px;
+                                    clicked => { root.time-toggle-pause(); }
+                                }
                             }
                         }
                     }
