@@ -44,6 +44,15 @@ export struct AiProviderItem {
     models: [string],
 }
 
+export struct CodecGenRow {
+    item1: string,
+    idx1: int,
+    has-item1: bool,
+    item2: string,
+    idx2: int,
+    has-item2: bool,
+}
+
 // AI 聊天输入框：上编辑区 + 框内底部「模型选择 / 发送」工具条
 component ChatComposer inherits Rectangle {
     in-out property <string> text;
@@ -331,19 +340,36 @@ export component RunnerWindow inherits Window {
     in-out property <string> codec-input: "";
     in-out property <string> codec-output: "";
     in-out property <int> codec-kind-index: 0;
-    in-out property <[string]> codec-options: ["Unicode", "UTF-8", "URL", "Hex", "Base64", "大小写"];
+    in-out property <[string]> codec-options: ["Unicode", "UTF-8", "URL", "Hex", "Base64", "大小写", "随机与ID"];
     in-out property <bool> codec-copied: false;
     in-out property <string> codec-error: "";
     in-out property <string> codec-status: "Unicode：文本 ↔ \\uXXXX";
+    in-out property <int> codec-gen-kind-index: 0;
+    in-out property <[string]> codec-gen-kinds: ["密码生成", "随机数", "UUIDv7", "NanoID", "雪花ID", "UUIDv4", "ULID", "ObjectId", "CUID2"];
+    in-out property <string> codec-gen-length: "16";
+    in-out property <string> codec-gen-count: "1";
+    in-out property <bool> codec-gen-uppercase: true;
+    in-out property <bool> codec-gen-lowercase: true;
+    in-out property <bool> codec-gen-digits: true;
+    in-out property <bool> codec-gen-symbols: true;
+    in-out property <bool> codec-gen-exclude-ambiguous: false;
+    in-out property <[CodecGenRow]> codec-gen-rows: [];
+    in-out property <int> codec-gen-total-count: 0;
+    in-out property <int> codec-gen-copied-index: -1;
 
     callback codec-encode();
     callback codec-decode();
     callback codec-swap();
     callback codec-clear();
     callback codec-copy();
+    callback codec-copy-item(int, string);
     callback codec-input-edited(string);
     callback codec-kind-changed(int);
-
+    callback codec-gen-kind-changed(int);
+    callback codec-gen-length-edited(string);
+    callback codec-gen-count-edited(string);
+    callback codec-gen-toggle(string, bool);
+    callback codec-gen-batch(int);
     // -------------------------------------------------------------------------
     // Host Settings View State (tray → 设置)
     // -------------------------------------------------------------------------
@@ -1373,8 +1399,8 @@ export component RunnerWindow inherits Window {
                     }
                 }
 
-                // 2. 输入区标题与快捷键提示
-                HorizontalLayout {
+                // 2a. 编码解码模式：输入区标题与快捷键提示
+                if root.codec-kind-index != 6 : HorizontalLayout {
                     alignment: space-between;
 
                     Text {
@@ -1393,14 +1419,14 @@ export component RunnerWindow inherits Window {
                     }
                 }
 
-                MultilineEditor {
+                if root.codec-kind-index != 6 : MultilineEditor {
                     text <=> root.codec-input;
                     vertical-stretch: 1;
                     edited(t) => { root.codec-input-edited(t); }
                 }
 
-                // 3. 转换动作条
-                HorizontalLayout {
+                // 3a. 编码解码模式：转换动作条
+                if root.codec-kind-index != 6 : HorizontalLayout {
                     spacing: 8px;
                     alignment: stretch;
 
@@ -1430,18 +1456,456 @@ export component RunnerWindow inherits Window {
                     }
                 }
 
-                // 4. 输出区标题
-                Text {
-                    text: "输出 (Output)";
-                    font-size: Theme.font-size-small;
-                    font-weight: 600;
-                    color: Theme.muted;
-                    vertical-alignment: center;
-                }
-                MultilineEditor {
-                    text <=> root.codec-output;
+                // 2b. 随机与ID生成控制区 (当 root.codec-kind-index == 6)
+                if root.codec-kind-index == 6 : VerticalLayout {
+                    spacing: 8px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+
+                        Text {
+                            text: "类型:";
+                            font-size: Theme.font-size-small;
+                            font-weight: 600;
+                            color: Theme.muted;
+                            vertical-alignment: center;
+                        }
+
+                        DropdownSelector {
+                            options: root.codec-gen-kinds;
+                            selected-index <=> root.codec-gen-kind-index;
+                            selector-width: 120px;
+                            selection-changed(idx) => { root.codec-gen-kind-changed(idx); }
+                        }
+
+                        if root.codec-gen-kind-index == 0 || root.codec-gen-kind-index == 1 || root.codec-gen-kind-index == 3 || root.codec-gen-kind-index == 8 : HorizontalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "长度:";
+                                font-size: Theme.font-size-small;
+                                font-weight: 600;
+                                color: Theme.muted;
+                                vertical-alignment: center;
+                            }
+                            ValueInput {
+                                text <=> root.codec-gen-length;
+                                width: 56px;
+                                edited(t) => { root.codec-gen-length-edited(t); }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "数量:";
+                                font-size: Theme.font-size-small;
+                                font-weight: 600;
+                                color: Theme.muted;
+                                vertical-alignment: center;
+                            }
+                            ValueInput {
+                                text <=> root.codec-gen-count;
+                                width: 48px;
+                                edited(t) => { root.codec-gen-count-edited(t); }
+                            }
+                        }
+
+                        ActionButton {
+                            text: "⚡ 立即生成";
+                            is-primary: true;
+                            min-btn-width: 88px;
+                            clicked => { root.codec-encode(); }
+                        }
+
+                        ActionButton {
+                            text: "5 个";
+                            min-btn-width: 56px;
+                            clicked => { root.codec-gen-batch(5); }
+                        }
+
+                        ActionButton {
+                            text: "10 个";
+                            min-btn-width: 56px;
+                            clicked => { root.codec-gen-batch(10); }
+                        }
+                    }
+
+                    // 密码专用字符集选择器 (当类型为密码生成 root.codec-gen-kind-index == 0 时)
+                    if root.codec-gen-kind-index == 0 : HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+
+                        Text {
+                            text: "字符集:";
+                            font-size: Theme.font-size-small;
+                            font-weight: 600;
+                            color: Theme.muted;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            height: 28px;
+                            border-radius: Theme.radius-control;
+                            background: root.codec-gen-uppercase ? Theme.primary : Theme.secondary;
+                            border-width: 1px;
+                            border-color: root.codec-gen-uppercase ? Theme.primary-hover : Theme.border;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                alignment: center;
+                                Text {
+                                    text: "A-Z 大写";
+                                    font-size: Theme.font-size-small;
+                                    color: root.codec-gen-uppercase ? Theme.primary-fg : Theme.foreground;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            TouchArea {
+                                clicked => {
+                                    root.codec-gen-uppercase = !root.codec-gen-uppercase;
+                                    root.codec-gen-toggle("switch_upper", root.codec-gen-uppercase);
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            height: 28px;
+                            border-radius: Theme.radius-control;
+                            background: root.codec-gen-lowercase ? Theme.primary : Theme.secondary;
+                            border-width: 1px;
+                            border-color: root.codec-gen-lowercase ? Theme.primary-hover : Theme.border;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                alignment: center;
+                                Text {
+                                    text: "a-z 小写";
+                                    font-size: Theme.font-size-small;
+                                    color: root.codec-gen-lowercase ? Theme.primary-fg : Theme.foreground;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            TouchArea {
+                                clicked => {
+                                    root.codec-gen-lowercase = !root.codec-gen-lowercase;
+                                    root.codec-gen-toggle("switch_lower", root.codec-gen-lowercase);
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            height: 28px;
+                            border-radius: Theme.radius-control;
+                            background: root.codec-gen-digits ? Theme.primary : Theme.secondary;
+                            border-width: 1px;
+                            border-color: root.codec-gen-digits ? Theme.primary-hover : Theme.border;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                alignment: center;
+                                Text {
+                                    text: "0-9 数字";
+                                    font-size: Theme.font-size-small;
+                                    color: root.codec-gen-digits ? Theme.primary-fg : Theme.foreground;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            TouchArea {
+                                clicked => {
+                                    root.codec-gen-digits = !root.codec-gen-digits;
+                                    root.codec-gen-toggle("switch_digits", root.codec-gen-digits);
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            height: 28px;
+                            border-radius: Theme.radius-control;
+                            background: root.codec-gen-symbols ? Theme.primary : Theme.secondary;
+                            border-width: 1px;
+                            border-color: root.codec-gen-symbols ? Theme.primary-hover : Theme.border;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                alignment: center;
+                                Text {
+                                    text: "!@# 符号";
+                                    font-size: Theme.font-size-small;
+                                    color: root.codec-gen-symbols ? Theme.primary-fg : Theme.foreground;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            TouchArea {
+                                clicked => {
+                                    root.codec-gen-symbols = !root.codec-gen-symbols;
+                                    root.codec-gen-toggle("switch_symbols", root.codec-gen-symbols);
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            height: 28px;
+                            border-radius: Theme.radius-control;
+                            background: root.codec-gen-exclude-ambiguous ? Theme.primary : Theme.secondary;
+                            border-width: 1px;
+                            border-color: root.codec-gen-exclude-ambiguous ? Theme.primary-hover : Theme.border;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                 padding-right: 8px;
+                                 alignment: center;
+                                 Text {
+                                     text: "排除混淆 (0/O/1/l)";
+                                     font-size: Theme.font-size-small;
+                                     color: root.codec-gen-exclude-ambiguous ? Theme.primary-fg : Theme.foreground;
+                                     vertical-alignment: center;
+                                 }
+                             }
+                             TouchArea {
+                                 clicked => {
+                                     root.codec-gen-exclude-ambiguous = !root.codec-gen-exclude-ambiguous;
+                                     root.codec-gen-toggle("switch_ambiguous", root.codec-gen-exclude-ambiguous);
+                                 }
+                             }
+                         }
+                     }
+                 }
+
+                // 4. 输出区
+                // 4a. 编解码模式输出：传统多行文本框
+                if root.codec-kind-index != 6 : VerticalLayout {
+                    spacing: 8px;
                     vertical-stretch: 1;
-                    read-only: true;
+
+                    Text {
+                        text: "输出 (Output)";
+                        font-size: Theme.font-size-small;
+                        font-weight: 600;
+                        color: Theme.muted;
+                        vertical-alignment: center;
+                    }
+
+                    MultilineEditor {
+                        text <=> root.codec-output;
+                        vertical-stretch: 1;
+                        read-only: true;
+                    }
+                }
+
+                // 4b. 随机与ID生成模式输出：单项点击即复制列表
+                if root.codec-kind-index == 6 : VerticalLayout {
+                    spacing: 8px;
+                    vertical-stretch: 1;
+
+                    HorizontalLayout {
+                        alignment: space-between;
+
+                        Text {
+                            text: "生成结果 (点击单项直接复制)";
+                            font-size: Theme.font-size-small;
+                            font-weight: 600;
+                            color: Theme.muted;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            text: root.codec-gen-total-count > 0 ? "共 " + root.codec-gen-total-count + " 条" : "";
+                            font-size: 11px;
+                            color: Theme.muted;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    if root.codec-gen-total-count == 0 : Rectangle {
+                        vertical-stretch: 1;
+                        border-radius: Theme.radius-control;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        background: Theme.card-bg;
+
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 8px;
+
+                            Text {
+                                text: "暂无生成结果";
+                                font-size: Theme.font-size-body;
+                                font-weight: 500;
+                                color: Theme.muted;
+                                horizontal-alignment: center;
+                            }
+
+                            Text {
+                                text: "点击上方「⚡ 立即生成」，生成后点击条目即可一键复制";
+                                font-size: Theme.font-size-small;
+                                color: Theme.muted;
+                                horizontal-alignment: center;
+                            }
+                        }
+                    }
+
+                    if root.codec-gen-total-count > 0 : ScrollView {
+                        vertical-stretch: 1;
+                        viewport-width: self.visible-width;
+
+                        VerticalLayout {
+                            spacing: 6px;
+                            padding-right: 4px;
+
+                            for row in root.codec-gen-rows : HorizontalLayout {
+                                spacing: 8px;
+                                height: 38px;
+
+                                // 卡片 1
+                                if row.has-item1 : Rectangle {
+                                    horizontal-stretch: 1;
+                                    border-radius: Theme.radius-control;
+                                    border-width: 1px;
+                                    border-color: root.codec-gen-copied-index == row.idx1
+                                        ? Theme.success-border
+                                        : (touch1.has-hover ? Theme.primary : Theme.border);
+                                    background: root.codec-gen-copied-index == row.idx1
+                                        ? Theme.success-bg
+                                        : (touch1.has-hover ? Theme.secondary-hover : Theme.card-bg);
+
+                                    animate background { duration: 100ms; }
+                                    animate border-color { duration: 100ms; }
+
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        padding-right: 10px;
+                                        spacing: 6px;
+                                        alignment: space-between;
+
+                                        Text {
+                                            text: row.idx1 + 1;
+                                            font-size: Theme.font-size-small;
+                                            font-weight: 600;
+                                            color: Theme.muted;
+                                            vertical-alignment: center;
+                                            width: 18px;
+                                        }
+
+                                        Text {
+                                            text: row.item1;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-body;
+                                            font-weight: 500;
+                                            color: root.codec-gen-copied-index == row.idx1 ? Theme.success : Theme.foreground;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                            overflow: elide;
+                                        }
+
+                                        HorizontalLayout {
+                                            spacing: 2px;
+                                            alignment: end;
+                                            width: 58px;
+
+                                            if root.codec-gen-copied-index == row.idx1 : Text {
+                                                text: "✓ 已复制";
+                                                font-size: Theme.font-size-small;
+                                                font-weight: 600;
+                                                color: Theme.success;
+                                                vertical-alignment: center;
+                                            }
+
+                                            if root.codec-gen-copied-index != row.idx1 : Text {
+                                                text: touch1.has-hover ? "📋 复制" : "";
+                                                font-size: Theme.font-size-small;
+                                                color: Theme.primary;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+
+                                    touch1 := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.codec-copy-item(row.idx1, row.item1);
+                                        }
+                                    }
+                                }
+
+                                // 卡片 2
+                                if row.has-item2 : Rectangle {
+                                    horizontal-stretch: 1;
+                                    border-radius: Theme.radius-control;
+                                    border-width: 1px;
+                                    border-color: root.codec-gen-copied-index == row.idx2
+                                        ? Theme.success-border
+                                        : (touch2.has-hover ? Theme.primary : Theme.border);
+                                    background: root.codec-gen-copied-index == row.idx2
+                                        ? Theme.success-bg
+                                        : (touch2.has-hover ? Theme.secondary-hover : Theme.card-bg);
+
+                                    animate background { duration: 100ms; }
+                                    animate border-color { duration: 100ms; }
+
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        padding-right: 10px;
+                                        spacing: 6px;
+                                        alignment: space-between;
+
+                                        Text {
+                                            text: row.idx2 + 1;
+                                            font-size: Theme.font-size-small;
+                                            font-weight: 600;
+                                            color: Theme.muted;
+                                            vertical-alignment: center;
+                                            width: 18px;
+                                        }
+
+                                        Text {
+                                            text: row.item2;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-body;
+                                            font-weight: 500;
+                                            color: root.codec-gen-copied-index == row.idx2 ? Theme.success : Theme.foreground;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                            overflow: elide;
+                                        }
+
+                                        HorizontalLayout {
+                                            spacing: 2px;
+                                            alignment: end;
+                                            width: 58px;
+
+                                            if root.codec-gen-copied-index == row.idx2 : Text {
+                                                text: "✓ 已复制";
+                                                font-size: Theme.font-size-small;
+                                                font-weight: 600;
+                                                color: Theme.success;
+                                                vertical-alignment: center;
+                                            }
+
+                                            if root.codec-gen-copied-index != row.idx2 : Text {
+                                                text: touch2.has-hover ? "📋 复制" : "";
+                                                font-size: Theme.font-size-small;
+                                                color: Theme.primary;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+
+                                    touch2 := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.codec-copy-item(row.idx2, row.item2);
+                                        }
+                                    }
+                                }
+
+                                // 占位空块：若当前行仅 1 项，占位 50% 保持网格对齐
+                                if !row.has-item2 : Rectangle {
+                                    horizontal-stretch: 1;
+                                    background: transparent;
+                                }
+                            }
+                        }
+                    }
                 }
 
                 HorizontalLayout {
@@ -1463,7 +1927,8 @@ export component RunnerWindow inherits Window {
                         clicked => { root.codec-clear(); }
                     }
 
-                    CopyButton {
+                    // 仅在编解码模式展示底部复制按钮，随机与ID生成模式下已支持点一下就复制单项
+                    if root.codec-kind-index != 6 : CopyButton {
                         copied: root.codec-copied;
                         enabled: root.codec-output != "";
                         clicked => { root.codec-copy(); }

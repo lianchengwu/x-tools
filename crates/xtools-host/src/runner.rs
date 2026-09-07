@@ -1025,6 +1025,77 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
                 });
             });
         }
+        {
+            let h = handle_event.clone();
+            ui.on_codec_gen_kind_changed(move |idx| {
+                h(UiEvent::SelectChanged {
+                    id: "select_gen_kind".to_string(),
+                    index: idx as usize,
+                    value: idx.to_string(),
+                });
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_codec_gen_length_edited(move |val| {
+                h(UiEvent::InputChanged {
+                    id: "input_gen_length".to_string(),
+                    value: val.to_string(),
+                });
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_codec_gen_count_edited(move |val| {
+                h(UiEvent::InputChanged {
+                    id: "input_gen_count".to_string(),
+                    value: val.to_string(),
+                });
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_codec_gen_toggle(move |id, checked| {
+                h(UiEvent::ToggleChanged {
+                    id: id.to_string(),
+                    checked,
+                });
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_codec_gen_batch(move |count| {
+                let id = if count == 10 {
+                    "btn_gen_10"
+                } else {
+                    "btn_gen_5"
+                };
+                h(UiEvent::Click {
+                    id: id.to_string(),
+                });
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_codec_copy_item(move |idx, text| {
+                let s = text.to_string();
+                if !s.is_empty() {
+                    copy_to_clipboard(&s);
+                    show_toast(ui_w.clone(), &format!("已复制: {s}"), true);
+                }
+                if let Some(u) = ui_w.upgrade() {
+                    u.set_codec_gen_copied_index(idx);
+                    let ui_reset = ui_w.clone();
+                    slint::Timer::single_shot(Duration::from_millis(1500), move || {
+                        if let Some(u) = ui_reset.upgrade() {
+                            if u.get_codec_gen_copied_index() == idx {
+                                u.set_codec_gen_copied_index(-1);
+                            }
+                        }
+                    });
+                }
+            });
+        }
     }
 
     // Wire AI Plugin Callbacks
@@ -1629,6 +1700,14 @@ fn sync_codec_view(ui: &RunnerWindow, root: &UiNode) {
     let mut source = None;
     let mut target = None;
     let mut kind_idx = 0;
+    let mut gen_kind_idx = None;
+    let mut gen_length = None;
+    let mut gen_count = None;
+    let mut gen_upper = None;
+    let mut gen_lower = None;
+    let mut gen_digits = None;
+    let mut gen_symbols = None;
+    let mut gen_ambiguous = None;
     let mut error_text = String::new();
     let mut status_text = String::new();
 
@@ -1637,6 +1716,14 @@ fn sync_codec_view(ui: &RunnerWindow, root: &UiNode) {
         &mut source,
         &mut target,
         &mut kind_idx,
+        &mut gen_kind_idx,
+        &mut gen_length,
+        &mut gen_count,
+        &mut gen_upper,
+        &mut gen_lower,
+        &mut gen_digits,
+        &mut gen_symbols,
+        &mut gen_ambiguous,
         &mut error_text,
         &mut status_text,
     );
@@ -1645,46 +1732,146 @@ fn sync_codec_view(ui: &RunnerWindow, root: &UiNode) {
         ui.set_codec_input(s.into());
     }
     if let Some(t) = target {
+        let lines: Vec<String> = t
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let total_count = lines.len() as i32;
+        ui.set_codec_gen_total_count(total_count);
+
+        let mut rows = Vec::new();
+        for chunk in lines.chunks(2) {
+            let item1: slint::SharedString = chunk[0].clone().into();
+            let idx1 = (rows.len() * 2) as i32;
+            let (item2, idx2, has_item2): (slint::SharedString, i32, bool) = if chunk.len() > 1 {
+                (chunk[1].clone().into(), idx1 + 1, true)
+            } else {
+                ("".into(), -1, false)
+            };
+            rows.push(CodecGenRow {
+                item1,
+                idx1,
+                has_item1: true,
+                item2,
+                idx2,
+                has_item2,
+            });
+        }
+        ui.set_codec_gen_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
         ui.set_codec_output(t.into());
     }
     ui.set_codec_kind_index(kind_idx as i32);
+    if let Some(gk) = gen_kind_idx {
+        ui.set_codec_gen_kind_index(gk as i32);
+    }
+    if let Some(gl) = gen_length {
+        ui.set_codec_gen_length(gl.into());
+    }
+    if let Some(gc) = gen_count {
+        ui.set_codec_gen_count(gc.into());
+    }
+    if let Some(u) = gen_upper {
+        ui.set_codec_gen_uppercase(u);
+    }
+    if let Some(l) = gen_lower {
+        ui.set_codec_gen_lowercase(l);
+    }
+    if let Some(d) = gen_digits {
+        ui.set_codec_gen_digits(d);
+    }
+    if let Some(s) = gen_symbols {
+        ui.set_codec_gen_symbols(s);
+    }
+    if let Some(a) = gen_ambiguous {
+        ui.set_codec_gen_exclude_ambiguous(a);
+    }
     ui.set_codec_error(error_text.into());
     if !status_text.is_empty() {
         ui.set_codec_status(status_text.into());
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_codec_nodes(
     node: &UiNode,
     source: &mut Option<String>,
     target: &mut Option<String>,
     kind_idx: &mut usize,
+    gen_kind_idx: &mut Option<usize>,
+    gen_length: &mut Option<String>,
+    gen_count: &mut Option<String>,
+    gen_upper: &mut Option<bool>,
+    gen_lower: &mut Option<bool>,
+    gen_digits: &mut Option<bool>,
+    gen_symbols: &mut Option<bool>,
+    gen_ambiguous: &mut Option<bool>,
     error_text: &mut String,
     status_text: &mut String,
 ) {
     match node {
         UiNode::Container { children, .. } => {
             for child in children {
-                collect_codec_nodes(child, source, target, kind_idx, error_text, status_text);
+                collect_codec_nodes(
+                    child,
+                    source,
+                    target,
+                    kind_idx,
+                    gen_kind_idx,
+                    gen_length,
+                    gen_count,
+                    gen_upper,
+                    gen_lower,
+                    gen_digits,
+                    gen_symbols,
+                    gen_ambiguous,
+                    error_text,
+                    status_text,
+                );
             }
         }
         UiNode::Card { children, .. } => {
             for child in children {
-                collect_codec_nodes(child, source, target, kind_idx, error_text, status_text);
+                collect_codec_nodes(
+                    child,
+                    source,
+                    target,
+                    kind_idx,
+                    gen_kind_idx,
+                    gen_length,
+                    gen_count,
+                    gen_upper,
+                    gen_lower,
+                    gen_digits,
+                    gen_symbols,
+                    gen_ambiguous,
+                    error_text,
+                    status_text,
+                );
             }
         }
         UiNode::TextInput { id, value, .. } => match id.as_str() {
             "input_source" => *source = Some(value.clone()),
             "input_target" => *target = Some(value.clone()),
+            "input_gen_length" => *gen_length = Some(value.clone()),
+            "input_gen_count" => *gen_count = Some(value.clone()),
             _ => {}
         },
         UiNode::Select {
             id, selected_index, ..
-        } => {
-            if id == "select_kind" {
-                *kind_idx = *selected_index;
-            }
-        }
+        } => match id.as_str() {
+            "select_kind" => *kind_idx = *selected_index,
+            "select_gen_kind" => *gen_kind_idx = Some(*selected_index),
+            _ => {}
+        },
+        UiNode::Switch { id, checked, .. } => match id.as_str() {
+            "switch_upper" => *gen_upper = Some(*checked),
+            "switch_lower" => *gen_lower = Some(*checked),
+            "switch_digits" => *gen_digits = Some(*checked),
+            "switch_symbols" => *gen_symbols = Some(*checked),
+            "switch_ambiguous" => *gen_ambiguous = Some(*checked),
+            _ => {}
+        },
         UiNode::Label { text: t, variant, .. } => {
             if *variant == LabelVariant::Error {
                 *error_text = t.clone();

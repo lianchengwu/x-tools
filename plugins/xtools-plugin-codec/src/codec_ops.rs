@@ -8,15 +8,17 @@ pub enum CodecKind {
     Hex,
     Base64,
     Case,
+    Generator,
 }
 
-pub const CODEC_KINDS: [CodecKind; 6] = [
+pub const CODEC_KINDS: [CodecKind; 7] = [
     CodecKind::Unicode,
     CodecKind::Utf8,
     CodecKind::Url,
     CodecKind::Hex,
     CodecKind::Base64,
     CodecKind::Case,
+    CodecKind::Generator,
 ];
 
 impl CodecKind {
@@ -32,6 +34,7 @@ impl CodecKind {
             CodecKind::Hex => "Hex",
             CodecKind::Base64 => "Base64",
             CodecKind::Case => "大小写",
+            CodecKind::Generator => "随机与ID",
         }
     }
 
@@ -43,19 +46,21 @@ impl CodecKind {
             CodecKind::Hex => "Hex：文本 ↔ UTF-8 十六进制",
             CodecKind::Base64 => "Base64：文本 ↔ Base64",
             CodecKind::Case => "大小写：编码→大写，解码→小写",
+            CodecKind::Generator => "随机与ID：密码、随机数、UUIDv7、NanoID、雪花ID及其他ID生成",
         }
     }
 
     pub fn encode_label(self) -> &'static str {
         match self {
             CodecKind::Case => "大写",
+            CodecKind::Generator => "⚡ 生成",
             _ => "编码",
         }
     }
-
     pub fn decode_label(self) -> &'static str {
         match self {
             CodecKind::Case => "小写",
+            CodecKind::Generator => "批量生成",
             _ => "解码",
         }
     }
@@ -73,6 +78,7 @@ pub fn encode(kind: CodecKind, input: &str) -> Result<String, String> {
         CodecKind::Hex => Ok(encode_hex(input)),
         CodecKind::Base64 => Ok(encode_base64(input.as_bytes())),
         CodecKind::Case => Ok(input.to_uppercase()),
+        CodecKind::Generator => Ok(input.to_string()),
     }
 }
 
@@ -84,6 +90,7 @@ pub fn decode(kind: CodecKind, input: &str) -> Result<String, String> {
         CodecKind::Hex => decode_hex(input),
         CodecKind::Base64 => decode_base64_to_text(input),
         CodecKind::Case => Ok(input.to_lowercase()),
+        CodecKind::Generator => Ok(input.to_string()),
     }
 }
 

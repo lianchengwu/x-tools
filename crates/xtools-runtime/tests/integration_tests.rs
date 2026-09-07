@@ -259,6 +259,65 @@ fn test_codec_plugin_lifecycle_encode_decode() {
 }
 
 #[test]
+fn test_codec_plugin_generator_mode() {
+    let Some(path) = require_plugin_artifact("test_codec_plugin_generator_mode", "codec") else {
+        return;
+    };
+    let loader = PluginLoader::new();
+    let mut instance = loader.load_instance(&path).expect("Failed to load codec plugin");
+
+    // 1. Switch to Generator mode (index 6)
+    let evt_gen = UiEvent::SelectChanged {
+        id: "select_kind".to_string(),
+        index: 6,
+        value: "6".to_string(),
+    };
+    let resp = instance.handle_event(&evt_gen).expect("Failed to switch to generator");
+    if let UiResponse::UpdateView(view) = resp {
+        let serialized = serde_json::to_string(&view).unwrap();
+        assert!(serialized.contains("select_gen_kind"), "{serialized}");
+        assert!(serialized.contains("密码生成"), "{serialized}");
+        assert!(serialized.contains("已生成"), "{serialized}");
+    } else {
+        panic!("Expected UpdateView response");
+    }
+
+    // 2. Select UUIDv7 (index 2)
+    let evt_uuid7 = UiEvent::SelectChanged {
+        id: "select_gen_kind".to_string(),
+        index: 2,
+        value: "2".to_string(),
+    };
+    let resp_uuid = instance.handle_event(&evt_uuid7).expect("Failed to select UUIDv7");
+    if let UiResponse::UpdateView(view) = resp_uuid {
+        let serialized = serde_json::to_string(&view).unwrap();
+        assert!(serialized.contains("UUIDv7"), "{serialized}");
+        assert!(serialized.contains("已生成"), "{serialized}");
+    } else {
+        panic!("Expected UpdateView response");
+    }
+
+    // 3. Select Random Number (index 1) and custom length 8
+    let evt_rnd = UiEvent::SelectChanged {
+        id: "select_gen_kind".to_string(),
+        index: 1,
+        value: "1".to_string(),
+    };
+    let _ = instance.handle_event(&evt_rnd).expect("Failed to select random number");
+    let evt_len = UiEvent::InputChanged {
+        id: "input_gen_length".to_string(),
+        value: "8".to_string(),
+    };
+    let resp_len = instance.handle_event(&evt_len).expect("Failed to set length");
+    if let UiResponse::UpdateView(view) = resp_len {
+        let serialized = serde_json::to_string(&view).unwrap();
+        assert!(serialized.contains("随机数"), "{serialized}");
+    } else {
+        panic!("Expected UpdateView response");
+    }
+}
+
+#[test]
 fn test_trans_plugin_lifecycle_and_storage() {
     let Some(path) = require_plugin_artifact("test_trans_plugin_lifecycle_and_storage", "trans") else {
         return;
