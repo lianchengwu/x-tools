@@ -87,7 +87,67 @@ fn save_all_configs(ui: &RunnerWindow, ai_config: &AiConfigFile) {
     }
 }
 
-pub fn run_settings() -> Result<(), Box<dyn std::error::Error>> {
+/// 异步执行更新检查并在完成时通过事件循环更新 Slint UI
+fn trigger_check_update(ui_weak: slint::Weak<RunnerWindow>) {
+    let Some(ui) = ui_weak.upgrade() else {
+        return;
+    };
+    ui.set_update_status("checking".into());
+    ui.set_update_status_text("正在连接服务器检查新版本...".into());
+
+    let ui_w = ui_weak.clone();
+    std::thread::Builder::new()
+        .name("xtools-update-check".into())
+        .spawn(move || {
+            let result = crate::updater::check_for_update();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = ui_w.upgrade() else {
+                    return;
+                };
+                match result {
+                    Ok(info) => {
+                        ui.set_update_latest_version(info.latest_version.clone().into());
+                        ui.set_update_release_notes(info.release_notes.into());
+                        ui.set_update_release_url(info.release_url.into());
+                        ui.set_update_download_url(info.download_url.unwrap_or_default().into());
+                        ui.set_update_asset_name(info.asset_name.unwrap_or_default().into());
+                        ui.set_update_asset_size_text(
+                            info.asset_size
+                                .map(|s| crate::updater::format_size(s))
+                                .unwrap_or_default()
+                                .into(),
+                        );
+                        ui.set_update_published_at(
+                            info.published_at
+                                .as_deref()
+                                .map(|d| d.split('T').next().unwrap_or(d))
+                                .unwrap_or_default()
+                                .into(),
+                        );
+
+                        if info.has_update {
+                            ui.set_update_status("available".into());
+                            ui.set_update_status_text(
+                                format!("发现新版本: v{}！", info.latest_version).into(),
+                            );
+                        } else {
+                            ui.set_update_status("latest".into());
+                            ui.set_update_status_text(
+                                format!("当前已是最新版本 (v{})", info.current_version).into(),
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        ui.set_update_status("error".into());
+                        ui.set_update_status_text(err.into());
+                    }
+                }
+            });
+        })
+        .ok();
+}
+
+pub fn run_settings(auto_check_update: bool) -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
     init_input_method_env();
@@ -142,6 +202,8 @@ pub fn run_settings() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_window_opacity(opacity);
     ui.set_settings_opacity_percent((opacity * 100.0).round());
     rebuild_ai_providers(&ui, &ai_state.borrow());
+    ui.set_update_current_version(format!("v{}", env!("CARGO_PKG_VERSION")).into());
+    ui.set_update_status("idle".into());
 
     // Window drag handlers（无边框窗口 chrome 拖动）
     let drag_state = WindowDragState::new();
@@ -354,6 +416,31 @@ pub fn run_settings() -> Result<(), Box<dyn std::error::Error>> {
                 log::warn!("保存窗口透明度失败: {e}");
             }
         });
+    }
+
+    // 检查更新与打开链接回调
+    {
+        let ui_w = ui.as_weak();
+        ui.on_check_update_clicked(move || {
+            trigger_check_update(ui_w.clone());
+        });
+    }
+    {
+        let ui_w = ui.as_weak();
+        ui.on_open_url_clicked(move |url| {
+            let url = url.to_string();
+            if !url.is_empty() {
+                if let Err(e) = crate::updater::open_url(&url) {
+                    show_toast(ui_w.clone(), &e, false);
+                } else {
+                    show_toast(ui_w.clone(), "已在浏览器中打开链接", true);
+                }
+            }
+        });
+    }
+
+    if auto_check_update {
+        trigger_check_update(ui.as_weak());
     }
 
     let _raise_timer = setup_raise_timer(lock, ui.as_weak());

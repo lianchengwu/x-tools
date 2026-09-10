@@ -9,6 +9,7 @@ mod runner;
 mod settings_window;
 mod window_prefs;
 mod time_engine;
+mod updater;
 
 // 软件渲染器与 Windows 宿主；Linux 测试构建同样编译 paint 以跑渲染单测
 #[cfg(any(windows, test))]
@@ -35,6 +36,7 @@ fn print_help() {
     println!("  xtools <plugin.wasm>      # Directly launch WASM plugin by path or name");
     println!("  xtools settings           # Open the settings window (Baidu / AI config)");
     println!("  xtools list               # List all discovered WASM plugins");
+    println!("  xtools check-update [--json] # Check for new version of xtools");
     println!("  xtools --help             # Show this help information");
 }
 
@@ -61,7 +63,14 @@ fn main() {
             print_help();
         }
         Some("settings") => {
-            if let Err(e) = settings_window::run_settings() {
+            if let Err(e) = settings_window::run_settings(true) {
+                eprintln!("xtools error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Some("check-update") | Some("update") | Some("check") => {
+            let json = args.iter().any(|arg| arg == "--json");
+            if let Err(e) = updater::run_cli_check(json) {
                 eprintln!("xtools error: {e}");
                 std::process::exit(1);
             }

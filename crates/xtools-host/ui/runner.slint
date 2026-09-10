@@ -386,6 +386,21 @@ export component RunnerWindow inherits Window {
     callback ai-model-added(string);
     callback ai-model-removed(string, string);
     callback ai-new-model-changed(string, string);
+    // -------------------------------------------------------------------------
+    // Host Update View State
+    // -------------------------------------------------------------------------
+    in-out property <string> update-current-version: "";
+    in-out property <string> update-status: "idle"; // "idle", "checking", "latest", "available", "error"
+    in-out property <string> update-status-text: "";
+    in-out property <string> update-latest-version: "";
+    in-out property <string> update-release-notes: "";
+    in-out property <string> update-release-url: "";
+    in-out property <string> update-download-url: "";
+    in-out property <string> update-asset-name: "";
+    in-out property <string> update-asset-size-text: "";
+    in-out property <string> update-published-at: "";
+    callback check-update-clicked();
+    callback open-url-clicked(string);
 
     // -------------------------------------------------------------------------
     // AI Plugin State & Callbacks
@@ -2230,6 +2245,209 @@ export component RunnerWindow inherits Window {
                                 vertical-alignment: center;
                             }
                         }
+                        // Version & Software Update Card
+                        Rectangle {
+                            border-radius: Theme.radius-control;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            background: Theme.card-bg;
+
+                            VerticalLayout {
+                                padding: 14px;
+                                spacing: 10px;
+
+                                // 第一行：标题 + 当前版本 + 检查更新按钮
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    alignment: stretch;
+
+                                    Text {
+                                        text: "🚀 软件版本与更新";
+                                        font-size: Theme.font-size-small;
+                                        font-weight: 600;
+                                        color: Theme.foreground;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Rectangle {
+                                        height: 22px;
+                                        border-radius: 11px;
+                                        background: Theme.secondary;
+                                        border-width: 1px;
+                                        border-color: Theme.border;
+
+                                        HorizontalLayout {
+                                            padding-left: 8px;
+                                            padding-right: 8px;
+                                            alignment: center;
+                                            Text {
+                                                text: "当前: " + root.update-current-version;
+                                                font-size: Theme.font-size-small;
+                                                font-family: Theme.font-mono;
+                                                color: Theme.muted;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle { horizontal-stretch: 1; }
+
+                                    ActionButton {
+                                        text: root.update-status == "checking" ? "正在检查..." : "检查更新";
+                                        enabled: root.update-status != "checking";
+                                        is-primary: root.update-status != "checking";
+                                        clicked => { root.check-update-clicked(); }
+                                    }
+                                }
+
+                                // 状态展示区域
+                                if root.update-status == "idle" : Text {
+                                    text: "点击「检查更新」获取最新版本及发布说明";
+                                    font-size: Theme.font-size-small;
+                                    color: Theme.muted;
+                                }
+
+                                if root.update-status == "checking" : HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    Text {
+                                        text: "⏳ 正在连接服务器检查新版本...";
+                                        font-size: Theme.font-size-small;
+                                        color: Theme.primary;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                if root.update-status == "latest" : HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    Text {
+                                        text: "✓ 当前已是最新版本 (" + root.update-current-version + ")";
+                                        font-size: Theme.font-size-small;
+                                        font-weight: 600;
+                                        color: Theme.success;
+                                        vertical-alignment: center;
+                                    }
+                                    if root.update-release-url != "" : ActionButton {
+                                        text: "查看发布记录";
+                                        btn-height: 26px;
+                                        min-btn-width: 80px;
+                                        clicked => { root.open-url-clicked(root.update-release-url); }
+                                    }
+                                }
+
+                                if root.update-status == "error" : HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    Text {
+                                        text: "✕ " + root.update-status-text;
+                                        font-size: Theme.font-size-small;
+                                        color: Theme.error-fg;
+                                        vertical-alignment: center;
+                                    }
+                                    ActionButton {
+                                        text: "重试";
+                                        btn-height: 26px;
+                                        min-btn-width: 60px;
+                                        clicked => { root.check-update-clicked(); }
+                                    }
+                                }
+
+                                if root.update-status == "available" : Rectangle {
+                                    border-radius: Theme.radius-control;
+                                    border-width: 1px;
+                                    border-color: Theme.primary;
+                                    background: Theme.secondary;
+
+                                    VerticalLayout {
+                                        padding: 12px;
+                                        spacing: 8px;
+
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: stretch;
+
+                                            Text {
+                                                text: "🎉 发现新版本: v" + root.update-latest-version;
+                                                font-size: Theme.font-size-body;
+                                                font-weight: 600;
+                                                color: Theme.primary;
+                                                vertical-alignment: center;
+                                            }
+
+                                            if root.update-published-at != "" : Text {
+                                                text: "（发布于 " + root.update-published-at + "）";
+                                                font-size: Theme.font-size-small;
+                                                color: Theme.muted;
+                                                vertical-alignment: center;
+                                            }
+
+                                            Rectangle { horizontal-stretch: 1; }
+
+                                            if root.update-download-url != "" : ActionButton {
+                                                text: "直接下载安装包";
+                                                is-primary: true;
+                                                clicked => { root.open-url-clicked(root.update-download-url); }
+                                            }
+
+                                            ActionButton {
+                                                text: "打开发布主页";
+                                                clicked => { root.open-url-clicked(root.update-release-url); }
+                                            }
+                                        }
+
+                                        if root.update-asset-name != "" : HorizontalLayout {
+                                            spacing: 6px;
+                                            Text {
+                                                text: "匹配安装包:";
+                                                font-size: Theme.font-size-small;
+                                                color: Theme.muted;
+                                            }
+                                            Text {
+                                                text: root.update-asset-name + (root.update-asset-size-text != "" ? (" (" + root.update-asset-size-text + ")") : "");
+                                                font-size: Theme.font-size-small;
+                                                font-family: Theme.font-mono;
+                                                color: Theme.foreground;
+                                            }
+                                        }
+
+                                        if root.update-release-notes != "" : VerticalLayout {
+                                            spacing: 4px;
+                                            Text {
+                                                text: "更新说明:";
+                                                font-size: Theme.font-size-small;
+                                                font-weight: 600;
+                                                color: Theme.muted;
+                                            }
+                                            Rectangle {
+                                                border-radius: Theme.radius-control;
+                                                background: Theme.card-bg;
+                                                border-width: 1px;
+                                                border-color: Theme.border;
+                                                max-height: 140px;
+                                                clip: true;
+
+                                                ScrollView {
+                                                    height: min(notes-body.preferred-height, 140px);
+                                                    viewport-width: self.visible-width;
+                                                    viewport-height: max(self.visible-height, notes-body.preferred-height);
+                                                    notes-body := VerticalLayout {
+                                                        padding: 8px;
+                                                        Text {
+                                                            text: root.update-release-notes;
+                                                            font-size: Theme.font-size-small;
+                                                            wrap: word-wrap;
+                                                            color: Theme.foreground;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
 
                         // 百度翻译 API Card（单行紧凑：标题 + AppID + 密钥）
                         Rectangle {
