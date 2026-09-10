@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use ksni::blocking::TrayMethods;
-use ksni::menu::{MenuItem, StandardItem};
+use ksni::menu::{MenuItem, StandardItem, SubMenu};
 use ksni::{Icon, ToolTip, Tray};
 
 /// 查找图标所在目录（优先可执行文件同级目录，其次当前工作目录）
@@ -38,9 +38,19 @@ impl Tray for XtoolsTray {
     }
 
     fn tool_tip(&self) -> ToolTip {
+        let desc = if let Some(info) = crate::updater::get_cached_update() {
+            if info.has_update {
+                format!("桌面悬浮工具箱 (🎉 发现新版本 v{})", info.latest_version)
+            } else {
+                "桌面悬浮工具箱 (WASM 插件架构)".into()
+            }
+        } else {
+            "桌面悬浮工具箱 (WASM 插件架构)".into()
+        };
+
         ToolTip {
             title: "xtools (WASM)".into(),
-            description: "桌面悬浮工具箱 (WASM 插件架构)".into(),
+            description: desc,
             icon_name: "xtools".into(),
             icon_pixmap: Vec::new(),
         }
@@ -62,6 +72,60 @@ impl Tray for XtoolsTray {
         let toggle_label = if is_open { "收起悬浮球" } else { "展开悬浮球" };
         let open_flag = self.open.clone();
 
+        // 插件二级菜单（功能选择）
+        let plugins = crate::runner::discover_plugins();
+        let plugin_items: Vec<MenuItem<Self>> = plugins
+            .into_iter()
+            .map(|p| {
+                let mark = if p.manifest.mark.is_empty() {
+                    "•".to_string()
+                } else {
+                    p.manifest.mark.clone()
+                };
+                let label = format!("{mark} {}", p.manifest.name);
+                StandardItem {
+                    label,
+                    activate: Box::new(move |_| {
+                        crate::runner::launch_plugin(&p);
+                    }),
+                    ..Default::default()
+                }
+                .into()
+            })
+            .collect();
+
+        let cached = crate::updater::get_cached_update();
+        let update_item: MenuItem<Self> = if let Some(info) = &cached {
+            if info.has_update {
+                StandardItem {
+                    label: format!("🎉 发现新版本 (v{})", info.latest_version),
+                    activate: Box::new(|_| {
+                        spawn_settings_window(true);
+                    }),
+                    ..Default::default()
+                }
+                .into()
+            } else {
+                StandardItem {
+                    label: format!("✓ 已是最新版本 (v{})", info.current_version),
+                    activate: Box::new(|_| {
+                        spawn_settings_window(true);
+                    }),
+                    ..Default::default()
+                }
+                .into()
+            }
+        } else {
+            StandardItem {
+                label: "检查更新".into(),
+                activate: Box::new(|_| {
+                    spawn_settings_window(true);
+                }),
+                ..Default::default()
+            }
+            .into()
+        };
+
         vec![
             StandardItem {
                 label: toggle_label.into(),
@@ -73,14 +137,22 @@ impl Tray for XtoolsTray {
             }
             .into(),
             MenuItem::Separator,
+            SubMenu {
+                label: "功能选择".into(),
+                submenu: plugin_items,
+                ..Default::default()
+            }
+            .into(),
+            MenuItem::Separator,
             StandardItem {
                 label: "设置".into(),
                 activate: Box::new(|_| {
-                    spawn_settings_window();
+                    spawn_settings_window(false);
                 }),
                 ..Default::default()
             }
             .into(),
+            update_item,
             MenuItem::Separator,
             StandardItem {
                 label: "退出 xtools".into(),
@@ -95,17 +167,19 @@ impl Tray for XtoolsTray {
 }
 
 /// 从托盘拉起独立设置窗口（独立进程，重复点击由单实例机制合并）
-fn spawn_settings_window() {
+fn spawn_settings_window(check_update: bool) {
     if xtools_ui::raise_instance("xtools-settings", None).unwrap_or(false) {
         log::info!("Raised existing settings window");
         xtools_ui::kwin::raise_window(0, Some("设置"));
         return;
     }
     let self_exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("xtools"));
-    match std::process::Command::new(self_exe)
-        .arg("settings")
-        .spawn()
-    {
+    let mut cmd = std::process::Command::new(self_exe);
+    cmd.arg("settings");
+    if check_update {
+        cmd.arg("--check-update");
+    }
+    match cmd.spawn() {
         Ok(_) => {}
         Err(e) => {
             log::error!("Failed to spawn settings window: {e}");
@@ -114,6 +188,7 @@ fn spawn_settings_window() {
 }
 
 pub fn spawn_tray(open_flag: Arc<AtomicBool>) {
+    crate::updater::spawn_background_update_check();
     std::thread::Builder::new()
         .name("xtools-tray".into())
         .spawn(move || {

@@ -7,14 +7,16 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIcon, CreatePopupMenu, DestroyIcon, DestroyMenu,
-    GetCursorPos, HICON, HMENU, MF_SEPARATOR, MF_STRING, SetForegroundWindow,
+    GetCursorPos, HICON, HMENU, MF_POPUP, MF_SEPARATOR, MF_STRING, SetForegroundWindow,
     TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, TrackPopupMenu,
 };
 
 pub const WM_TRAY_CALLBACK: u32 = 0x8000 + 100; // WM_APP + 100
 pub const ID_TRAY_SHOW_HIDE: usize = 1001;
 pub const ID_TRAY_SETTINGS: usize = 1002;
-pub const ID_TRAY_QUIT: usize = 1003;
+pub const ID_TRAY_CHECK_UPDATE: usize = 1003;
+pub const ID_TRAY_QUIT: usize = 1004;
+pub const ID_TRAY_PLUGIN_BASE: usize = 2000;
 
 pub struct TrayIcon {
     nid: NOTIFYICONDATAW,
@@ -58,7 +60,40 @@ impl TrayIcon {
 
             AppendMenuW(hmenu, MF_STRING, ID_TRAY_SHOW_HIDE, show_w.as_ptr());
             AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
+
+            // 插件二级子菜单（功能选择）
+            let hsub: HMENU = CreatePopupMenu();
+            let plugins = crate::runner::discover_plugins();
+            for (i, p) in plugins.iter().enumerate() {
+                let mark = if p.manifest.mark.is_empty() {
+                    "•"
+                } else {
+                    &p.manifest.mark
+                };
+                let label = format!("{mark} {}\0", p.manifest.name);
+                let label_w: Vec<u16> = label.encode_utf16().collect();
+                let cmd_id = ID_TRAY_PLUGIN_BASE + i;
+                AppendMenuW(hsub, MF_STRING, cmd_id, label_w.as_ptr());
+            }
+            let sub_label_w: Vec<u16> = "功能选择\0".encode_utf16().collect();
+            AppendMenuW(hmenu, MF_POPUP, hsub as usize, sub_label_w.as_ptr());
+            AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
+
             AppendMenuW(hmenu, MF_STRING, ID_TRAY_SETTINGS, settings_w.as_ptr());
+
+            // 检查新版本状态提示
+            let update_text = if let Some(info) = crate::updater::get_cached_update() {
+                if info.has_update {
+                    format!("🎉 发现新版本 (v{})\0", info.latest_version)
+                } else {
+                    format!("✓ 已是最新版本 (v{})\0", info.current_version)
+                }
+            } else {
+                "检查更新\0".to_string()
+            };
+            let update_w: Vec<u16> = update_text.encode_utf16().collect();
+            AppendMenuW(hmenu, MF_STRING, ID_TRAY_CHECK_UPDATE, update_w.as_ptr());
+
             AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
             AppendMenuW(hmenu, MF_STRING, ID_TRAY_QUIT, quit_w.as_ptr());
 

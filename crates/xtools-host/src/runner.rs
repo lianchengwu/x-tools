@@ -9,7 +9,7 @@ use std::time::Duration;
 use slint::ComponentHandle;
 use slint::Model;
 use xtools_protocol::*;
-use xtools_runtime::{PluginInstance, PluginLoader};
+use xtools_runtime::{DiscoveredPlugin, PluginInstance, PluginLoader};
 use xtools_ui::boot::{capture_target_desktop, init_input_method_env, take_activation_token};
 use xtools_ui::instance::{claim_instance, raise_instance};
 use xtools_ui::slint_chrome::{
@@ -97,6 +97,106 @@ pub fn list_plugins() {
     }
     if found_count == 0 {
         println!("  (No plugins found in search paths)");
+    }
+}
+
+pub fn discover_plugins() -> Vec<DiscoveredPlugin> {
+    let loader = PluginLoader::new();
+    let mut discovered: Vec<DiscoveredPlugin> = Vec::new();
+
+    for dir in xtools_runtime::plugin_search_dirs() {
+        if dir.exists() {
+            for p in loader.scan_dir(&dir) {
+                if !discovered.iter().any(|d| d.manifest.id == p.manifest.id) {
+                    discovered.push(p);
+                }
+            }
+        }
+    }
+
+    if discovered.is_empty() {
+        let fallback = [
+            ("time", "xtools.time", "时间戳转换", "🕒"),
+            ("json", "xtools.json", "JSON 格式化", "{}"),
+            ("trans", "xtools.trans", "智能翻译", "文"),
+            ("codec", "xtools.codec", "编解码与哈希", "码"),
+            ("ai", "xtools.ai", "AI 问答", "智"),
+        ];
+
+        for (short, id, name, mark) in fallback {
+            discovered.push(DiscoveredPlugin {
+                path: PathBuf::from(format!("{short}.wasm")),
+                manifest: PluginManifest {
+                    id: id.into(),
+                    name: name.into(),
+                    version: env!("CARGO_PKG_VERSION").into(),
+                    description: String::new(),
+                    author: String::new(),
+                    icon_svg: None,
+                    mark: mark.into(),
+                    window: WindowConfig::default(),
+                    permissions: Vec::new(),
+                },
+            });
+        }
+    }
+
+    discovered
+}
+
+pub fn launch_plugin(plugin: &DiscoveredPlugin) {
+    let instance_name = plugin.manifest.id.replace('.', "-");
+    let wasm_arg = plugin.path.to_string_lossy().to_string();
+
+    #[cfg(windows)]
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(
+            windows_sys::Win32::UI::WindowsAndMessaging::ASFW_ANY,
+        );
+    }
+
+    if raise_instance(&instance_name, None).unwrap_or(false) {
+        log::info!("Raised existing window for {}", instance_name);
+        #[cfg(unix)]
+        xtools_ui::kwin::raise_window(0, Some(&plugin.manifest.name));
+        return;
+    }
+
+    let self_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("xtools"));
+    let mut cmd = std::process::Command::new(self_exe);
+    cmd.arg("run");
+    cmd.arg(&wasm_arg);
+
+    #[cfg(unix)]
+    {
+        cmd.env_remove("XDG_ACTIVATION_TOKEN");
+        cmd.env_remove("DESKTOP_STARTUP_ID");
+        cmd.env_remove("GIO_LAUNCHED_DESKTOP_FILE_PID");
+        cmd.env_remove("GIO_LAUNCHED_DESKTOP_FILE");
+
+        if let Some(desk) = &xtools_ui::kwin::current_desktop() {
+            cmd.env("XTOOLS_TARGET_DESKTOP", desk);
+        }
+        if std::env::var("XMODIFIERS").map_or(true, |v| v.trim().is_empty()) {
+            cmd.env("XMODIFIERS", "@im=fcitx");
+        }
+        if std::env::var("GTK_IM_MODULE").map_or(true, |v| v.trim().is_empty()) {
+            cmd.env("GTK_IM_MODULE", "fcitx");
+        }
+        if std::env::var("QT_IM_MODULE").map_or(true, |v| v.trim().is_empty()) {
+            cmd.env("QT_IM_MODULE", "fcitx");
+        }
+    }
+
+    match cmd.spawn() {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(e) => {
+            log::error!("Failed to spawn runner for {wasm_arg}: {e}");
+        }
     }
 }
 
@@ -2158,5 +2258,12 @@ mod tests {
         assert_eq!(plugin_window_sizes("trans"), (725, 600, 1088, 900));
         assert_eq!(plugin_window_sizes("ai"), (725, 600, 1088, 900));
         assert_eq!(plugin_window_sizes("generic"), (725, 600, 1088, 900));
+    }
+
+    #[test]
+    fn test_discover_plugins_not_empty() {
+        let plugins = discover_plugins();
+        assert!(!plugins.is_empty());
+        assert!(plugins.iter().any(|p| p.manifest.id == "xtools.time"));
     }
 }

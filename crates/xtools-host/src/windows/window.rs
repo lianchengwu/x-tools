@@ -40,7 +40,8 @@ use crate::anim;
 use crate::layout::{Rect, fan_seats_dynamic, hit_disk};
 use crate::windows::paint::{Surface, draw_func, draw_main};
 use crate::windows::tray::{
-    ID_TRAY_QUIT, ID_TRAY_SETTINGS, ID_TRAY_SHOW_HIDE, TrayIcon, WM_TRAY_CALLBACK,
+    ID_TRAY_CHECK_UPDATE, ID_TRAY_PLUGIN_BASE, ID_TRAY_QUIT, ID_TRAY_SETTINGS, ID_TRAY_SHOW_HIDE,
+    TrayIcon, WM_TRAY_CALLBACK,
 };
 
 const TIMER_ANIM: usize = 1;
@@ -628,7 +629,7 @@ fn launch_plugin(plugin: &DiscoveredPlugin) {
 }
 
 /// 从托盘拉起独立设置窗口（独立进程，重复点击由单实例机制合并）
-fn spawn_settings_window() {
+fn spawn_settings_window(check_update: bool) {
     unsafe {
         windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(
             windows_sys::Win32::UI::WindowsAndMessaging::ASFW_ANY,
@@ -641,7 +642,12 @@ fn spawn_settings_window() {
     let Ok(self_exe) = std::env::current_exe() else {
         return;
     };
-    if let Err(err) = Command::new(self_exe).arg("settings").spawn() {
+    let mut cmd = Command::new(self_exe);
+    cmd.arg("settings");
+    if check_update {
+        cmd.arg("--check-update");
+    }
+    if let Err(err) = cmd.spawn() {
         log::error!("Failed to spawn settings window: {err}");
     }
 }
@@ -696,10 +702,18 @@ unsafe extern "system" fn window_proc(
                 if id == ID_TRAY_SHOW_HIDE {
                     host.toggle_visibility();
                 } else if id == ID_TRAY_SETTINGS {
-                    spawn_settings_window();
+                    spawn_settings_window(false);
+                } else if id == ID_TRAY_CHECK_UPDATE {
+                    spawn_settings_window(true);
                 } else if id == ID_TRAY_QUIT {
                     DestroyWindow(hwnd);
                     PostQuitMessage(0);
+                } else if id >= ID_TRAY_PLUGIN_BASE {
+                    let idx = id - ID_TRAY_PLUGIN_BASE;
+                    let plugins = crate::runner::discover_plugins();
+                    if let Some(p) = plugins.get(idx) {
+                        crate::runner::launch_plugin(p);
+                    }
                 }
                 0
             }
@@ -753,6 +767,7 @@ pub fn run() {
         return;
     };
 
+    crate::updater::spawn_background_update_check();
     let class_name: Vec<u16> = "XToolsHostWindow\0".encode_utf16().collect();
     let hinstance = unsafe { GetModuleHandleW(std::ptr::null()) };
 
