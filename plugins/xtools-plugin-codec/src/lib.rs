@@ -87,7 +87,7 @@ impl XPlugin for CodecPlugin {
         PluginManifest {
             id: "xtools.codec".to_string(),
             name: "编码解码".to_string(),
-            version: "0.7.2".to_string(),
+            version: "0.8.1".to_string(),
             description: "Unicode、UTF-8、URL、Hex、Base64 编解码与随机数、密码、UUIDv7、NanoID 等 ID 生成".to_string(),
             author: "xtools".to_string(),
             mark: "码".to_string(),
