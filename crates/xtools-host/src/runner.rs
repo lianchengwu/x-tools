@@ -13,7 +13,8 @@ use xtools_runtime::{DiscoveredPlugin, PluginInstance, PluginLoader};
 use xtools_ui::boot::{capture_target_desktop, init_input_method_env, take_activation_token};
 use xtools_ui::instance::{claim_instance, raise_instance};
 use xtools_ui::slint_chrome::{
-    ResizeEdge, WindowDragState, WindowResizeState, copy_to_clipboard, setup_raise_timer,
+    ResizeEdge, WindowDragState, WindowResizeState, copy_to_clipboard,
+    setup_raise_timer_with_callback,
 };
 
 slint::include_modules!();
@@ -27,6 +28,48 @@ thread_local! {
     /// 事件交回插件处理并同步视图。
     static AI_DISPATCH: RefCell<Option<AiDispatch>> = const { RefCell::new(None) };
     static TIME_CLOCK_TIMER: RefCell<Option<slint::Timer>> = const { RefCell::new(None) };
+}
+
+/// 去掉下划线、横杠等符号，只留下英文字符（单词间以单个空格分隔，多余空格收敛并 trim）
+pub fn clean_trans_text(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut last_was_space = true;
+
+    for ch in input.chars() {
+        if ch.is_ascii_alphabetic() {
+            result.push(ch);
+            last_was_space = false;
+        } else if !last_was_space {
+            result.push(' ');
+            last_was_space = true;
+        }
+    }
+
+    if last_was_space && !result.is_empty() {
+        result.pop();
+    }
+
+    result
+}
+
+/// 采用 wl-clipboard 中的 wl-paste --primary 获取系统划词（Primary Selection）
+pub fn get_primary_selection() -> Option<String> {
+    #[cfg(unix)]
+    {
+        if let Ok(output) = std::process::Command::new("wl-paste")
+            .arg("--primary")
+            .arg("--no-newline")
+            .output()
+        {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout).to_string();
+                if !text.trim().is_empty() {
+                    return Some(text);
+                }
+            }
+        }
+    }
+    None
 }
 
 pub fn find_plugin_wasm(arg: &str) -> Option<PathBuf> {
@@ -118,9 +161,9 @@ pub fn discover_plugins() -> Vec<DiscoveredPlugin> {
         let fallback = [
             ("time", "xtools.time", "时间戳转换", "🕒"),
             ("json", "xtools.json", "JSON 格式化", "{}"),
-            ("trans", "xtools.trans", "智能翻译", "文"),
+            ("trans", "xtools.trans", "智能翻译", "译"),
             ("codec", "xtools.codec", "编解码与哈希", "码"),
-            ("ai", "xtools.ai", "AI 问答", "智"),
+            ("ai", "xtools.ai", "AI 问答", "AI"),
         ];
 
         for (short, id, name, mark) in fallback {
@@ -963,12 +1006,62 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Wire Trans Plugin Callbacks
+    let mut trans_auto_runner: Option<Rc<dyn Fn() -> bool>> = None;
     if plugin_kind == "trans" {
+        let do_selection_translate = {
+            let h = handle_event.clone();
+            let ui_w = ui.as_weak();
+            move || {
+                if let Some(text) = get_primary_selection() {
+                    let cleaned = clean_trans_text(&text);
+                    if !cleaned.is_empty() {
+                        if let Some(u) = ui_w.upgrade() {
+                            u.set_trans_source(cleaned.clone().into());
+                            u.set_trans_pending(true);
+                        }
+                        h(UiEvent::InputChanged {
+                            id: "input_source".to_string(),
+                            value: cleaned,
+                        });
+                        h(UiEvent::Click {
+                            id: "btn_translate".to_string(),
+                        });
+                        if let Some(u) = ui_w.upgrade() {
+                            u.set_trans_pending(false);
+                        }
+                        return true;
+                    }
+                }
+                false
+            }
+        };
+
+        {
+            let do_trans = do_selection_translate.clone();
+            let ui_w = ui.as_weak();
+            ui.on_trans_auto_translate(move || {
+                if !do_trans() {
+                    show_toast(ui_w.clone(), "未检测到有效划词内容", false);
+                }
+            });
+        }
+
         {
             let h = handle_event.clone();
             let ui_w = ui.as_weak();
             ui.on_trans_translate(move || {
                 if let Some(u) = ui_w.upgrade() {
+                    let src = u.get_trans_source().to_string();
+                    if src.contains('_') || src.contains('-') {
+                        let cleaned = clean_trans_text(&src);
+                        if !cleaned.is_empty() {
+                            u.set_trans_source(cleaned.clone().into());
+                            h(UiEvent::InputChanged {
+                                id: "input_source".to_string(),
+                                value: cleaned,
+                            });
+                        }
+                    }
                     u.set_trans_pending(true);
                 }
                 h(UiEvent::Click {
@@ -979,6 +1072,8 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
         }
+
+        trans_auto_runner = Some(Rc::new(do_selection_translate));
         {
             let h = handle_event.clone();
             ui.on_trans_swap(move || {
@@ -1458,7 +1553,17 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    let _raise_timer = setup_raise_timer(lock, ui.as_weak());
+    // 如果是翻译插件，在启动时自动获取划词并直接翻译
+    if let Some(do_trans) = &trans_auto_runner {
+        do_trans();
+    }
+
+    let raise_runner = trans_auto_runner.clone();
+    let _raise_timer = setup_raise_timer_with_callback(lock, ui.as_weak(), move |_token| {
+        if let Some(do_trans) = &raise_runner {
+            do_trans();
+        }
+    });
     // Wayland/KWin: the persistent script applies skipTaskbar/skipPager/onAllDesktops
     // on windowAdded; just make sure it is loaded and restore the captured desktop.
     #[cfg(unix)]
@@ -2265,5 +2370,14 @@ mod tests {
         let plugins = discover_plugins();
         assert!(!plugins.is_empty());
         assert!(plugins.iter().any(|p| p.manifest.id == "xtools.time"));
+    }
+
+    #[test]
+    fn test_clean_trans_text_in_runner() {
+        assert_eq!(clean_trans_text("hello_world"), "hello world");
+        assert_eq!(clean_trans_text("wl-paste --primary"), "wl paste primary");
+        assert_eq!(clean_trans_text("get_user_info_by_id"), "get user info by id");
+        assert_eq!(clean_trans_text("---"), "");
+        assert_eq!(clean_trans_text("MAX_RETRY-COUNT"), "MAX RETRY COUNT");
     }
 }

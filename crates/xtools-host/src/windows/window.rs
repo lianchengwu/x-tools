@@ -217,8 +217,8 @@ impl HostWindow {
             let fallback = [
                 ("time", "xtools.time", "时间戳转换", "clock"),
                 ("json", "xtools.json", "JSON 格式化", "{}"),
-                ("trans", "xtools.trans", "划词翻译", "文"),
-                ("ai", "xtools.ai", "AI 问答", "智"),
+                ("trans", "xtools.trans", "划词翻译", "译"),
+                ("ai", "xtools.ai", "AI 问答", "AI"),
                 ("codec", "xtools.codec", "编码解码", "码"),
             ];
             for (short, id, name, mark) in fallback {

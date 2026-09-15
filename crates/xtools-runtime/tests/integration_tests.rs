@@ -61,11 +61,11 @@ fn test_plugin_scanner_discovers_all_plugins() {
 
     let trans_p = discovered.iter().find(|p| p.manifest.id == "xtools.trans").unwrap();
     assert_eq!(trans_p.manifest.name, "智能翻译");
-    assert_eq!(trans_p.manifest.mark, "文");
+    assert_eq!(trans_p.manifest.mark, "译");
 
     let ai_p = discovered.iter().find(|p| p.manifest.id == "xtools.ai").unwrap();
     assert_eq!(ai_p.manifest.name, "AI 问答");
-    assert_eq!(ai_p.manifest.mark, "智");
+    assert_eq!(ai_p.manifest.mark, "AI");
 
     let codec_p = discovered.iter().find(|p| p.manifest.id == "xtools.codec").unwrap();
     assert_eq!(codec_p.manifest.name, "编码解码");

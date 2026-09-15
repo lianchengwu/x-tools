@@ -16,7 +16,7 @@ export component ActionButton inherits Rectangle {
     height: root.btn-height;
     border-radius: Theme.radius-control;
     border-width: (root.is-primary || root.variant == "primary" || root.variant == "success" || root.variant == "danger") ? 0px : 1px;
-    border-color: !root.enabled ? Theme.border-subtle : (touch.has-hover ? Theme.border-hover : Theme.border);
+    border-color: !root.enabled ? Theme.border-subtle : (touch.has-hover ? Theme.border-hover : Theme.border-subtle);
     background: !root.enabled 
         ? ((root.is-primary || root.variant == "primary") ? Theme.primary-disabled : (root.variant == "success" ? Theme.border : (root.variant == "danger" ? Theme.border : Theme.background)))
         : (root.variant == "success"
@@ -64,7 +64,7 @@ export component CopyButton inherits Rectangle {
     border-width: 1px;
     border-color: root.copied 
         ? Theme.success-border 
-        : (!root.enabled ? Theme.border-subtle : (touch.has-hover ? Theme.border-hover : Theme.border));
+        : (!root.enabled ? Theme.border-subtle : (touch.has-hover ? Theme.border-hover : Theme.border-subtle));
     background: root.copied 
         ? Theme.success-bg 
         : (!root.enabled ? Theme.background : (touch.pressed ? Theme.secondary-active : (touch.has-hover ? Theme.secondary-hover : Theme.secondary)));
@@ -116,7 +116,7 @@ export component IconButton inherits Rectangle {
     height: Theme.control-height;
     border-radius: Theme.radius-control;
     border-width: 1px;
-    border-color: !root.enabled ? Theme.border-subtle : (touch.has-hover ? Theme.border-hover : Theme.border);
+    border-color: !root.enabled ? Theme.border-subtle : (touch.has-hover ? Theme.border-hover : Theme.border-subtle);
     background: !root.enabled ? Theme.background : (touch.pressed ? Theme.secondary-active : (touch.has-hover ? Theme.secondary-hover : Theme.secondary));
 
     animate background { duration: 100ms; }
@@ -208,7 +208,7 @@ export component ValueInput inherits Rectangle {
     height: root.input-height;
     border-radius: Theme.radius-control;
     border-width: input.has-focus ? 1.5px : 1px;
-    border-color: input.has-focus ? Theme.primary : (touch.has-hover ? Theme.border-hover : Theme.border);
+    border-color: input.has-focus ? Theme.primary : (touch.has-hover ? Theme.border-hover : Theme.border-subtle);
     background: Theme.card-bg;
 
     animate border-color { duration: 100ms; }
@@ -307,7 +307,7 @@ export component MultilineEditor inherits Rectangle {
 
     border-radius: Theme.radius-control;
     border-width: editor.has-focus ? 1.5px : 1px;
-    border-color: editor.has-focus ? Theme.primary : Theme.border;
+    border-color: editor.has-focus ? Theme.primary : Theme.border-subtle;
     background: Theme.card-bg;
 
     animate border-color { duration: 100ms; }
@@ -396,7 +396,7 @@ export component DropdownPopup inherits Rectangle {
 
     border-radius: Theme.radius-control;
     border-width: 1px;
-    border-color: Theme.border;
+    border-color: Theme.border-subtle;
     background: Theme.card-bg;
     drop-shadow-blur: 16px;
     drop-shadow-color: Theme.drop-shadow;
@@ -451,7 +451,7 @@ export component DropdownSelector inherits Rectangle {
     height: root.selector-height;
     border-radius: Theme.radius-control;
     border-width: 1px;
-    border-color: popup-area.has-hover ? Theme.border-hover : Theme.border;
+    border-color: popup-area.has-hover ? Theme.border-hover : Theme.border-subtle;
     background: popup-area.has-hover ? Theme.secondary-hover : Theme.secondary;
 
     animate background { duration: 100ms; }
@@ -542,7 +542,7 @@ export component ToolShell inherits Rectangle {
 
     border-radius: Theme.radius-card;
     border-width: 1px;
-    border-color: Theme.border;
+    border-color: Theme.border-subtle;
     background: Theme.background;
     clip: true;
 
@@ -553,7 +553,7 @@ export component ToolShell inherits Rectangle {
         // Titlebar Header
         Rectangle {
             height: Theme.titlebar-height;
-            background: Theme.card-bg;
+            background: Theme.background;
 
             // Drag region
             TouchArea {
@@ -658,9 +658,9 @@ export component ToolShell inherits Rectangle {
 
             // Subtle divider line
             Rectangle {
-                x: 0px;
+                x: 18px;
                 y: parent.height - 1px;
-                width: parent.width;
+                width: parent.width - 36px;
                 height: 1px;
                 background: Theme.border-subtle;
             }

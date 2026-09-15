@@ -8,19 +8,18 @@ export global Theme {
     out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
 
     // Surfaces & Canvas
-    out property <color> background: dark ? #171717 : #F8FAFC;
-    out property <color> card-bg: dark ? #262626 : #FFFFFF;
+    out property <color> background: dark ? #18181B : #F8FAFC;
+    out property <color> card-bg: dark ? #202024 : #FFFFFF;
     out property <color> foreground: dark ? #E5E5E5 : #0F172A;
     // Foreground one step softer (secondary text, icon hover)
     out property <color> foreground-soft: dark ? #D4D4D4 : #475569;
-    out property <color> secondary: dark ? #262626 : #F1F5F9;
-    out property <color> secondary-hover: dark ? #404040 : #E2E8F0;
-    out property <color> secondary-active: dark ? #525252 : #CBD5E1;
+    out property <color> secondary: dark ? #222226 : #F1F5F9;
+    out property <color> secondary-hover: dark ? #2C2C32 : #E2E8F0;
+    out property <color> secondary-active: dark ? #36363E : #CBD5E1;
     out property <color> muted: dark ? #A3A3A3 : #64748B;
-    out property <color> border: dark ? #404040 : #E2E8F0;
-    out property <color> border-subtle: dark ? #262626 : #F1F5F9;
-    out property <color> border-hover: dark ? #525252 : #CBD5E1;
-
+    out property <color> border: dark ? #2E2E34 : #E2E8F0;
+    out property <color> border-subtle: dark ? #232328 : #EDF2F7;
+    out property <color> border-hover: dark ? #3D3D46 : #CBD5E1;
     // Brand & Primary Accents
     out property <color> primary: dark ? #3B82F6 : #2563EB;
     out property <color> primary-hover: dark ? #60A5FA : #1D4ED8;
@@ -54,8 +53,8 @@ export global Theme {
     // 代码注释（AI 回答代码块高亮）
     out property <color> syntax-comment: dark ? #6B7280 : #94A3B8;
     // 代码块背景（略深于卡片底色）
-    out property <color> code-bg: dark ? #1C1C1C : #F1F5F9;
-    out property <color> code-border: dark ? #333333 : #E2E8F0;
+    out property <color> code-bg: dark ? #141416 : #F8FAFC;
+    out property <color> code-border: dark ? #222226 : #E8ECF2;
 
     // Drop shadow for popups (stronger in dark to stay visible)
     out property <color> drop-shadow: dark ? #00000066 : #0000001E;

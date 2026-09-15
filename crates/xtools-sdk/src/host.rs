@@ -6,6 +6,7 @@ mod sys {
     unsafe extern "C" {
         pub fn host_log(level: u32, ptr: *const u8, len: u32);
         pub fn host_clipboard_read(out_ptr_ptr: *mut *mut u8, out_len_ptr: *mut u32) -> i32;
+        pub fn host_clipboard_read_primary(out_ptr_ptr: *mut *mut u8, out_len_ptr: *mut u32) -> i32;
         pub fn host_clipboard_write(ptr: *const u8, len: u32) -> i32;
         pub fn host_http_request(
             req_ptr: *const u8,
@@ -60,6 +61,34 @@ pub fn clipboard_read() -> Result<String, String> {
             return Err(match res {
                 ERR_PERM_CLIPBOARD => "剪贴板访问被宿主拒绝：manifest 未声明 Clipboard 权限".to_string(),
                 _ => format!("Failed to read clipboard (code {res})"),
+            });
+        }
+        if out_ptr.is_null() || out_len == 0 {
+            return Ok(String::new());
+        }
+        let slice = std::slice::from_raw_parts(out_ptr, out_len as usize);
+        let s = String::from_utf8_lossy(slice).into_owned();
+        // Deallocate host-allocated buffer
+        let _ = Vec::from_raw_parts(out_ptr, out_len as usize, out_len as usize);
+        Ok(s)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Ok(String::new())
+    }
+}
+
+/// Read text from the system primary selection (Linux / Wayland wl-paste --primary)
+pub fn clipboard_read_primary() -> Result<String, String> {
+    #[cfg(target_arch = "wasm32")]
+    unsafe {
+        let mut out_ptr: *mut u8 = std::ptr::null_mut();
+        let mut out_len: u32 = 0;
+        let res = sys::host_clipboard_read_primary(&mut out_ptr, &mut out_len);
+        if res < 0 {
+            return Err(match res {
+                ERR_PERM_CLIPBOARD => "剪贴板访问被宿主拒绝：manifest 未声明 Clipboard 权限".to_string(),
+                _ => format!("Failed to read primary selection (code {res})"),
             });
         }
         if out_ptr.is_null() || out_len == 0 {

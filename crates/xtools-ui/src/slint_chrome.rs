@@ -216,11 +216,16 @@ impl WindowResizeState {
     }
 }
 
-/// Start a timer that polls the instance lock and handles raise or quit commands.
-pub fn setup_raise_timer(
+/// Start a timer that polls the instance lock and handles raise or quit commands,
+/// with a custom callback invoked whenever a raise command is received.
+pub fn setup_raise_timer_with_callback<F>(
     listener: crate::InstanceListener,
     window: slint::Weak<impl slint::ComponentHandle + 'static>,
-) -> slint::Timer {
+    mut on_raise: F,
+) -> slint::Timer
+where
+    F: FnMut(Option<String>) + 'static,
+{
     let timer = slint::Timer::default();
     timer.start(
         slint::TimerMode::Repeated,
@@ -229,7 +234,7 @@ pub fn setup_raise_timer(
             Some(crate::instance::InstanceCommand::Quit) => {
                 std::process::exit(0);
             }
-            Some(crate::instance::InstanceCommand::Raise(_token)) => {
+            Some(crate::instance::InstanceCommand::Raise(token)) => {
                 if let Some(ui) = window.upgrade() {
                     let _ = ui.window().show();
                     #[cfg(feature = "slint-chrome")]
@@ -291,12 +296,21 @@ pub fn setup_raise_timer(
                             }
                         });
                     }
+                    on_raise(token);
                 }
             }
             None => {}
         },
     );
     timer
+}
+
+/// Start a timer that polls the instance lock and handles raise or quit commands.
+pub fn setup_raise_timer(
+    listener: crate::InstanceListener,
+    window: slint::Weak<impl slint::ComponentHandle + 'static>,
+) -> slint::Timer {
+    setup_raise_timer_with_callback(listener, window, |_| {})
 }
 
 #[cfg(test)]

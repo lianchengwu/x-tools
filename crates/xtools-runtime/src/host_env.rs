@@ -35,6 +35,26 @@ fn build_http_agent(global_timeout: std::time::Duration) -> ureq::Agent {
         .into()
 }
 
+/// 采用 wl-clipboard 中的 wl-paste --primary 获取系统划词（Primary Selection）
+pub fn read_primary_selection() -> Option<String> {
+    #[cfg(unix)]
+    {
+        if let Ok(output) = std::process::Command::new("wl-paste")
+            .arg("--primary")
+            .arg("--no-newline")
+            .output()
+        {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout).to_string();
+                if !text.trim().is_empty() {
+                    return Some(text);
+                }
+            }
+        }
+    }
+    None
+}
+
 impl HostContext {
     pub fn new(plugin_id: String, storage_root: PathBuf) -> Self {
         let clipboard = match Clipboard::new() {
@@ -187,6 +207,38 @@ pub fn register_host_functions(linker: &mut Linker<HostContext>) -> Result<(), R
                 }
                 Err(e) => {
                     log::error!("Clipboard read alloc failed: {e}");
+                    -1
+                }
+            }
+        },
+    )?;
+
+    // 2b. host_clipboard_read_primary
+    linker.func_wrap(
+        HOST_MODULE,
+        HOST_CLIPBOARD_READ_PRIMARY,
+        |mut caller: Caller<'_, HostContext>, out_ptr_ptr: u32, out_len_ptr: u32| -> i32 {
+            if !caller.data().permissions.contains(&Permission::Clipboard) {
+                log::warn!(
+                    "[plugin:{}] primary selection read denied: Permission::Clipboard not declared",
+                    caller.data().plugin_id
+                );
+                return ERR_PERM_CLIPBOARD;
+            }
+            let text = read_primary_selection().unwrap_or_default();
+            let bytes = text.into_bytes();
+            match alloc_and_write(&mut caller, &bytes) {
+                Ok((ptr, len)) => {
+                    let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        Some(m) => m,
+                        None => return -1,
+                    };
+                    let _ = memory.write(&mut caller, out_ptr_ptr as usize, &ptr.to_le_bytes());
+                    let _ = memory.write(&mut caller, out_len_ptr as usize, &len.to_le_bytes());
+                    0
+                }
+                Err(e) => {
+                    log::error!("Primary selection read alloc failed: {e}");
                     -1
                 }
             }

@@ -1,7 +1,7 @@
 pub mod engine;
 
 use engine::{
-    SOURCE_LANGS, TARGET_LANGS, TransConfig, swap_state, translate,
+    SOURCE_LANGS, TARGET_LANGS, TransConfig, clean_trans_text, swap_state, translate,
 };
 use serde::{Deserialize, Serialize};
 use xtools_sdk::*;
@@ -26,7 +26,7 @@ impl XPlugin for TransPlugin {
             version: "0.7.2".to_string(),
             description: "支持 MyMemory (免密钥) 与百度翻译 API 的即时划词与多语言翻译工具".to_string(),
             author: "xtools".to_string(),
-            mark: "文".to_string(),
+            mark: "译".to_string(),
             icon_svg: None,
             window: WindowConfig {
                 width: 725,
@@ -56,14 +56,41 @@ impl XPlugin for TransPlugin {
             "引擎：MyMemory (免密钥)".to_string()
         };
 
+        let mut source_text = String::new();
+        let mut target_text = String::new();
+        let mut error = None;
+
+        // 尝试自动获取划词（Primary Selection），过滤符号只保留英文字符后直接翻译
+        if let Ok(primary) = host::clipboard_read_primary() {
+            let cleaned = clean_trans_text(&primary);
+            if !cleaned.is_empty() {
+                source_text = cleaned;
+                if config.engine_index == 1
+                    && (config.baidu_appid.trim().is_empty()
+                        || config.baidu_key.trim().is_empty())
+                {
+                    error = Some(
+                        "请先在托盘菜单「设置」中配置百度翻译 AppID 与密钥。".to_string(),
+                    );
+                } else if let Ok(res) = translate(
+                    &source_text,
+                    0,
+                    0,
+                    &config,
+                ) {
+                    target_text = res;
+                }
+            }
+        }
+
         Ok(Self {
-            source_text: String::new(),
-            target_text: String::new(),
+            source_text,
+            target_text,
             src_lang_idx: 0,
             dst_lang_idx: 0,
             config,
             pending: false,
-            error: None,
+            error,
             status,
         })
     }
@@ -114,6 +141,7 @@ impl XPlugin for TransPlugin {
             button("btn_swap_lang", "⇄"),
             select("select_dst_lang", dst_options, self.dst_lang_idx),
             spacer(),
+            button("btn_auto_translate", "🔤 划词翻译"),
             primary_button("btn_translate", translate_btn_label),
         ]);
         children.push(lang_bar);
@@ -144,11 +172,61 @@ impl XPlugin for TransPlugin {
     fn handle_event(&mut self, event: UiEvent) -> Result<UiResponse, String> {
         match event {
             UiEvent::Click { id } => match id.as_str() {
+                "btn_auto_translate" => {
+                    self.error = None;
+                    match host::clipboard_read_primary() {
+                        Ok(primary) => {
+                            let cleaned = clean_trans_text(&primary);
+                            if cleaned.is_empty() {
+                                self.error = Some("未检测到有效的划词内容。".to_string());
+                                return Ok(UiResponse::UpdateView(self.render()));
+                            }
+                            self.source_text = cleaned;
+                            if self.config.engine_index == 1
+                                && (self.config.baidu_appid.trim().is_empty()
+                                    || self.config.baidu_key.trim().is_empty())
+                            {
+                                self.error = Some(
+                                    "请先在托盘菜单「设置」中配置百度翻译 AppID 与密钥。".to_string(),
+                                );
+                                return Ok(UiResponse::UpdateView(self.render()));
+                            }
+
+                            match translate(
+                                &self.source_text,
+                                self.src_lang_idx,
+                                self.dst_lang_idx,
+                                &self.config,
+                            ) {
+                                Ok(res) => {
+                                    self.target_text = res;
+                                    self.error = None;
+                                }
+                                Err(e) => {
+                                    self.error = Some(e);
+                                }
+                            }
+                            Ok(UiResponse::UpdateView(self.render()))
+                        }
+                        Err(e) => {
+                            self.error = Some(format!("读取划词失败: {e}"));
+                            Ok(UiResponse::UpdateView(self.render()))
+                        }
+                    }
+                }
                 "btn_translate" => {
                     self.error = None;
                     if self.source_text.trim().is_empty() {
                         self.error = Some("先输入要翻译的文字。".to_string());
                         return Ok(UiResponse::UpdateView(self.render()));
+                    }
+
+                    // 翻译时若包含下划线或横杠等符号，清洗掉符号只留英文字符
+                    if self.source_text.contains('_') || self.source_text.contains('-') {
+                        let cleaned = clean_trans_text(&self.source_text);
+                        if !cleaned.is_empty() {
+                            self.source_text = cleaned;
+                        }
                     }
 
                     if self.config.engine_index == 1
@@ -303,4 +381,22 @@ mod tests {
         let err = plugin.error.as_deref().unwrap();
         assert!(err.contains("托盘") && err.contains("设置"));
     }
+
+    #[test]
+    fn test_trans_plugin_clean_symbols_on_translate() {
+        let mut plugin = TransPlugin::init().unwrap();
+        plugin.source_text = "hello_world-test".to_string();
+
+        // btn_translate should clean underscores and hyphens to "hello world test"
+        let _ = plugin.handle_event(UiEvent::Click { id: "btn_translate".to_string() });
+        assert_eq!(plugin.source_text, "hello world test");
+    }
+
+    #[test]
+    fn test_trans_plugin_auto_translate_empty_selection() {
+        let mut plugin = TransPlugin::init().unwrap();
+        // In test environment, clipboard_read_primary returns empty
+        let _ = plugin.handle_event(UiEvent::Click { id: "btn_auto_translate".to_string() });
+        assert!(plugin.error.is_some());
+}
 }

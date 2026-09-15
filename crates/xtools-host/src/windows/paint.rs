@@ -302,10 +302,10 @@ pub fn draw_func(surface: &mut Surface, mark: &str, cx: f64, cy: f64, t: f64, sc
     match mark {
         "clock" => draw_clock(surface, cx, cy, fr, color),
         "{}" => draw_json_mark(surface, cx, cy, scale, color),
-        "文" => draw_trans_mark(surface, cx, cy, scale, color),
+        "文" | "译" => draw_trans_mark(surface, cx, cy, scale, color),
         "码" => draw_codec_mark(surface, cx, cy, scale, color),
         // AI 问答等其余工具：四角星光标
-        _ => draw_ai_mark(surface, cx, cy, scale, color),
+        "智" | "AI" | _ => draw_ai_mark(surface, cx, cy, scale, color),
     }
 }
 
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn draw_func_renders_all_marks() {
         let mut surface = Surface::new(200, 200);
-        for mark in ["clock", "{}", "文", "智", "码", "unknown-fallback"] {
+        for mark in ["clock", "{}", "文", "译", "智", "AI", "码", "unknown-fallback"] {
             surface.clear();
             draw_func(&mut surface, mark, 100.0, 100.0, 1.0, 1.0);
             let center_idx = 100 * 200 + 100;

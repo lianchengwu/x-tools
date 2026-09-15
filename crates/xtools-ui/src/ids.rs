@@ -15,7 +15,7 @@ impl ToolId {
         match self {
             ToolId::Time => "clock",
             ToolId::Json => "{}",
-            ToolId::Trans => "文",
+            ToolId::Trans => "译",
         }
     }
 

@@ -56,6 +56,28 @@ pub fn translate(
     }
 }
 
+/// 去掉下划线、横杠等符号，只留下英文字符（单词间以单个空格分隔，多余空格收敛并 trim）
+pub fn clean_trans_text(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut last_was_space = true;
+
+    for ch in input.chars() {
+        if ch.is_ascii_alphabetic() {
+            result.push(ch);
+            last_was_space = false;
+        } else if !last_was_space {
+            result.push(' ');
+            last_was_space = true;
+        }
+    }
+
+    if last_was_space && !result.is_empty() {
+        result.pop();
+    }
+
+    result
+}
+
 pub fn swap_state(
     src: usize,
     dst: usize,
@@ -395,5 +417,20 @@ mod tests {
         assert_eq!(d, 0); // zh-CN in TARGET_LANGS
         assert_eq!(in_txt, "Hello");
         assert_eq!(out_txt, "你好");
+    }
+
+    #[test]
+    fn test_clean_trans_text() {
+        assert_eq!(clean_trans_text("hello_world"), "hello world");
+        assert_eq!(clean_trans_text("hello-world"), "hello world");
+        assert_eq!(clean_trans_text("  __init__  "), "init");
+        assert_eq!(clean_trans_text("wl-paste --primary"), "wl paste primary");
+        assert_eq!(clean_trans_text("const MAX_RETRY_COUNT = 3;"), "const MAX RETRY COUNT");
+        assert_eq!(clean_trans_text("user_name-profile"), "user name profile");
+        assert_eq!(clean_trans_text("---___---"), "");
+        assert_eq!(clean_trans_text(""), "");
+        assert_eq!(clean_trans_text("test"), "test");
+        assert_eq!(clean_trans_text("123"), "");
+        assert_eq!(clean_trans_text("hello, world!"), "hello world");
     }
 }

@@ -10,6 +10,7 @@ pub const EXPORT_HANDLE_EVENT: &str = "xtools_plugin_handle_event";
 pub const HOST_MODULE: &str = "xtools_host";
 pub const HOST_LOG: &str = "host_log";
 pub const HOST_CLIPBOARD_READ: &str = "host_clipboard_read";
+pub const HOST_CLIPBOARD_READ_PRIMARY: &str = "host_clipboard_read_primary";
 pub const HOST_CLIPBOARD_WRITE: &str = "host_clipboard_write";
 pub const HOST_HTTP_REQUEST: &str = "host_http_request";
 pub const HOST_STORAGE_GET: &str = "host_storage_get";
