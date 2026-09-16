@@ -167,7 +167,7 @@ impl Tray for XtoolsTray {
 }
 
 /// 从托盘拉起独立设置窗口（独立进程，重复点击由单实例机制合并）
-fn spawn_settings_window(check_update: bool) {
+pub fn spawn_settings_window(check_update: bool) {
     if xtools_ui::raise_instance("xtools-settings", None).unwrap_or(false) {
         log::info!("Raised existing settings window");
         xtools_ui::kwin::raise_window(0, Some("设置"));

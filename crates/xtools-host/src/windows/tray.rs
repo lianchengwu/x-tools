@@ -7,10 +7,11 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIcon, CreatePopupMenu, DestroyIcon, DestroyMenu,
-    GetCursorPos, HICON, HMENU, MF_POPUP, MF_SEPARATOR, MF_STRING, SetForegroundWindow,
-    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, TrackPopupMenu,
+    GetCursorPos, HICON, HMENU, MF_POPUP, MF_SEPARATOR, MF_STRING, PostMessageW,
+    SetForegroundWindow, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
+    WM_COMMAND, WM_NULL,
 };
-
+use xtools_runtime::DiscoveredPlugin;
 pub const WM_TRAY_CALLBACK: u32 = 0x8000 + 100; // WM_APP + 100
 pub const ID_TRAY_SHOW_HIDE: usize = 1001;
 pub const ID_TRAY_SETTINGS: usize = 1002;
@@ -46,36 +47,39 @@ impl TrayIcon {
         Self { nid, hicon }
     }
 
-    pub fn show_menu(&self, hwnd: HWND, is_visible: bool) {
+    pub fn show_menu(&self, hwnd: HWND, is_visible: bool, plugins: &[DiscoveredPlugin]) {
         unsafe {
             let hmenu: HMENU = CreatePopupMenu();
             let show_text = if is_visible {
-                "隐藏悬浮球\0"
+                "🔘 隐藏悬浮球\0"
             } else {
-                "显示悬浮球\0"
+                "🔘 显示悬浮球\0"
             };
             let show_w: Vec<u16> = show_text.encode_utf16().collect();
-            let settings_w: Vec<u16> = "设置\0".encode_utf16().collect();
-            let quit_w: Vec<u16> = "退出 xtools\0".encode_utf16().collect();
+            let settings_w: Vec<u16> = "⚙️ 设置\0".encode_utf16().collect();
+            let quit_w: Vec<u16> = "✕ 退出 xtools\0".encode_utf16().collect();
 
             AppendMenuW(hmenu, MF_STRING, ID_TRAY_SHOW_HIDE, show_w.as_ptr());
             AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
 
             // 插件二级子菜单（功能选择）
             let hsub: HMENU = CreatePopupMenu();
-            let plugins = crate::runner::discover_plugins();
             for (i, p) in plugins.iter().enumerate() {
-                let mark = if p.manifest.mark.is_empty() {
-                    "•"
-                } else {
-                    &p.manifest.mark
+                let mark = match p.manifest.mark.as_str() {
+                    "clock" => "🕒",
+                    "{}" => "{ }",
+                    "译" | "文" | "globe" => "🌐",
+                    "AI" | "智" => "✨",
+                    "码" => "⇄",
+                    other if !other.is_empty() => other,
+                    _ => "•",
                 };
-                let label = format!("{mark} {}\0", p.manifest.name);
+                let label = format!("{mark}  {}\0", p.manifest.name);
                 let label_w: Vec<u16> = label.encode_utf16().collect();
                 let cmd_id = ID_TRAY_PLUGIN_BASE + i;
                 AppendMenuW(hsub, MF_STRING, cmd_id, label_w.as_ptr());
             }
-            let sub_label_w: Vec<u16> = "功能选择\0".encode_utf16().collect();
+            let sub_label_w: Vec<u16> = "🧩 功能选择\0".encode_utf16().collect();
             AppendMenuW(hmenu, MF_POPUP, hsub as usize, sub_label_w.as_ptr());
             AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
 
@@ -89,7 +93,7 @@ impl TrayIcon {
                     format!("✓ 已是最新版本 (v{})\0", info.current_version)
                 }
             } else {
-                "检查更新\0".to_string()
+                "🚀 检查更新\0".to_string()
             };
             let update_w: Vec<u16> = update_text.encode_utf16().collect();
             AppendMenuW(hmenu, MF_STRING, ID_TRAY_CHECK_UPDATE, update_w.as_ptr());
@@ -101,16 +105,21 @@ impl TrayIcon {
             GetCursorPos(&mut pt);
 
             SetForegroundWindow(hwnd);
-            TrackPopupMenu(
+            let cmd = TrackPopupMenu(
                 hmenu,
-                TPM_LEFTALIGN | TPM_BOTTOMALIGN | TPM_RIGHTBUTTON,
+                TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD,
                 pt.x,
                 pt.y,
                 0,
                 hwnd,
                 std::ptr::null(),
             );
+            PostMessageW(hwnd, WM_NULL, 0, 0);
             DestroyMenu(hmenu);
+
+            if cmd > 0 {
+                PostMessageW(hwnd, WM_COMMAND, cmd as usize, 0);
+            }
         }
     }
 }

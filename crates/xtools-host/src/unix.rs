@@ -7,7 +7,10 @@ use std::sync::Arc;
 use gtk4::gdk::prelude::*;
 use gtk4::glib;
 use gtk4::prelude::*;
-use gtk4::{Application, ApplicationWindow, CssProvider, DrawingArea, GestureDrag};
+use gtk4::{
+    Application, ApplicationWindow, Button, CssProvider, DrawingArea, GestureClick, GestureDrag,
+    Label, Orientation, Popover, Separator,
+};
 use xtools_protocol::PluginManifest;
 use xtools_runtime::{DiscoveredPlugin, PluginLoader};
 use xtools_ui::{
@@ -193,7 +196,82 @@ impl Host {
 
 fn load_css() {
     let provider = CssProvider::new();
-    provider.load_from_string("window { background: transparent; }");
+    let css = r#"
+window { background: transparent; }
+
+popover.xtools-popover {
+    padding: 0;
+}
+popover.xtools-popover contents {
+    border-radius: 14px;
+    padding: 6px;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.1);
+    border: 1px solid alpha(currentColor, 0.12);
+}
+.xtools-menu-header {
+    padding: 4px 8px 4px 8px;
+}
+.xtools-title {
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+}
+.xtools-version-tag {
+    font-size: 11px;
+    opacity: 0.55;
+    margin-top: 1px;
+}
+.xtools-menu-section-title {
+    font-size: 10px;
+    font-weight: 700;
+    opacity: 0.45;
+    letter-spacing: 0.8px;
+    margin: 4px 8px 2px 8px;
+}
+.xtools-menu-btn {
+    border-radius: 8px;
+    padding: 6px 8px;
+    margin: 1px 0;
+    border: none;
+    background: transparent;
+    transition: background 120ms ease, color 120ms ease;
+}
+.xtools-menu-btn:hover {
+    background: alpha(currentColor, 0.08);
+}
+.xtools-menu-btn:active {
+    background: alpha(currentColor, 0.15);
+}
+.xtools-menu-icon {
+    font-size: 14px;
+    min-width: 22px;
+}
+.xtools-menu-label {
+    font-size: 13px;
+    font-weight: 500;
+}
+.xtools-badge {
+    border-radius: 6px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    background: alpha(#3B82F6, 0.15);
+    color: #2563EB;
+}
+.xtools-badge-update {
+    background: alpha(#10B981, 0.18);
+    color: #059669;
+}
+.xtools-danger-btn:hover {
+    background: alpha(#EF4444, 0.12);
+    color: #DC2626;
+}
+separator.xtools-separator {
+    margin: 4px 4px;
+    opacity: 0.25;
+}
+"#;
+    provider.load_from_string(css);
     if let Some(display) = gtk4::gdk::Display::default() {
         gtk4::style_context_add_provider_for_display(
             &display,
@@ -439,6 +517,206 @@ fn handle_click(
         begin_collapse(area, state);
     }
 }
+fn make_menu_row(
+    icon: &str,
+    title: &str,
+    badge: Option<(&str, bool)>,
+    is_danger: bool,
+) -> Button {
+    let btn = Button::new();
+    btn.add_css_class("flat");
+    btn.add_css_class("xtools-menu-btn");
+    if is_danger {
+        btn.add_css_class("xtools-danger-btn");
+    }
+
+    let hbox = gtk4::Box::new(Orientation::Horizontal, 8);
+    hbox.set_hexpand(true);
+
+    let icon_lbl = Label::new(Some(icon));
+    icon_lbl.add_css_class("xtools-menu-icon");
+    icon_lbl.set_xalign(0.5);
+    hbox.append(&icon_lbl);
+
+    let title_lbl = Label::new(Some(title));
+    title_lbl.add_css_class("xtools-menu-label");
+    title_lbl.set_xalign(0.0);
+    title_lbl.set_hexpand(true);
+    hbox.append(&title_lbl);
+
+    if let Some((badge_text, is_update)) = badge {
+        let badge_lbl = Label::new(Some(badge_text));
+        badge_lbl.add_css_class("xtools-badge");
+        if is_update {
+            badge_lbl.add_css_class("xtools-badge-update");
+        }
+        hbox.append(&badge_lbl);
+    }
+
+    btn.set_child(Some(&hbox));
+    btn
+}
+
+fn show_context_menu(area: &DrawingArea, state: &Rc<RefCell<Host>>, x: f64, y: f64) {
+    let (on_main, is_open, plugins) = {
+        let host = state.borrow();
+        let on_main = hit_disk(x, y, host.main.0, host.main.1, host.main_r());
+        (on_main, host.menu.is_openish(), host.plugins.clone())
+    };
+
+    if !on_main {
+        return;
+    }
+
+    // Expand the input region so the popover can receive clicks outside the main circle
+    input::apply_expanded_from_widget(area);
+
+    let popover = Popover::new();
+    popover.set_parent(area);
+    popover.add_css_class("xtools-popover");
+    popover.set_has_arrow(true);
+    let rect = gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
+    popover.set_pointing_to(Some(&rect));
+
+    let content = gtk4::Box::new(Orientation::Vertical, 2);
+    content.set_margin_start(4);
+    content.set_margin_end(4);
+    content.set_margin_top(4);
+    content.set_margin_bottom(4);
+
+    // 1. Header with App Title & Version
+    let header_box = gtk4::Box::new(Orientation::Horizontal, 6);
+    header_box.add_css_class("xtools-menu-header");
+    let title_lbl = Label::new(Some("xtools"));
+    title_lbl.add_css_class("xtools-title");
+    header_box.append(&title_lbl);
+
+    let ver_lbl = Label::new(Some(&format!("v{}", env!("CARGO_PKG_VERSION"))));
+    ver_lbl.add_css_class("xtools-version-tag");
+    ver_lbl.set_hexpand(true);
+    ver_lbl.set_xalign(0.0);
+    header_box.append(&ver_lbl);
+    content.append(&header_box);
+
+    let sep1 = Separator::new(Orientation::Horizontal);
+    sep1.add_css_class("xtools-separator");
+    content.append(&sep1);
+
+    // 2. Toggle expand / collapse
+    let toggle_icon = if is_open { "⭕" } else { "🔘" };
+    let toggle_label = if is_open { "收起悬浮球" } else { "展开悬浮球" };
+    let toggle_btn = make_menu_row(toggle_icon, toggle_label, None, false);
+    {
+        let state = Rc::clone(state);
+        let area = area.clone();
+        let popover = popover.clone();
+        toggle_btn.connect_clicked(move |_| {
+            popover.popdown();
+            let openish = state.borrow().menu.is_openish();
+            if openish {
+                begin_collapse(&area, &state);
+            } else {
+                begin_expand(&area, &state);
+            }
+        });
+    }
+    content.append(&toggle_btn);
+
+    let sep2 = Separator::new(Orientation::Horizontal);
+    sep2.add_css_class("xtools-separator");
+    content.append(&sep2);
+
+    // 3. Plugins
+    if !plugins.is_empty() {
+        let sec_title = Label::new(Some("功能插件"));
+        sec_title.add_css_class("xtools-menu-section-title");
+        sec_title.set_xalign(0.0);
+        content.append(&sec_title);
+
+        for p in &plugins {
+            let icon = match p.manifest.mark.as_str() {
+                "clock" => "🕒",
+                "{}" => "{ }",
+                "译" | "文" | "globe" => "🌐",
+                "AI" | "智" => "✨",
+                "码" => "⇄",
+                other if !other.is_empty() => other,
+                _ => "•",
+            };
+            let btn = make_menu_row(icon, &p.manifest.name, None, false);
+            let p = p.clone();
+            let popover = popover.clone();
+            btn.connect_clicked(move |_| {
+                popover.popdown();
+                launch_plugin(&p);
+            });
+            content.append(&btn);
+        }
+
+        let sep3 = Separator::new(Orientation::Horizontal);
+        sep3.add_css_class("xtools-separator");
+        content.append(&sep3);
+    }
+
+    // 4. Settings
+    let settings_btn = make_menu_row("⚙️", "设置", None, false);
+    {
+        let popover = popover.clone();
+        settings_btn.connect_clicked(move |_| {
+            popover.popdown();
+            tray::spawn_settings_window(false);
+        });
+    }
+    content.append(&settings_btn);
+
+    // 5. Update check
+    let cached_update = crate::updater::get_cached_update();
+    let (badge_info, update_text) = if let Some(info) = &cached_update {
+        if info.has_update {
+            (Some((info.latest_version.as_str(), true)), "检查更新")
+        } else {
+            (Some(("最新", false)), "检查更新")
+        }
+    } else {
+        (None, "检查更新")
+    };
+    let update_btn = make_menu_row("🚀", update_text, badge_info, false);
+    {
+        let popover = popover.clone();
+        update_btn.connect_clicked(move |_| {
+            popover.popdown();
+            tray::spawn_settings_window(true);
+        });
+    }
+    content.append(&update_btn);
+
+    let sep4 = Separator::new(Orientation::Horizontal);
+    sep4.add_css_class("xtools-separator");
+    content.append(&sep4);
+
+    // 6. Exit
+    let quit_btn = make_menu_row("✕", "退出 xtools", None, true);
+    quit_btn.connect_clicked(|_| {
+        std::process::exit(0);
+    });
+    content.append(&quit_btn);
+
+    popover.set_child(Some(&content));
+
+    // On close, restore input region and unparent popover
+    {
+        let state = Rc::clone(state);
+        let area = area.clone();
+        let popover_c = popover.clone();
+        popover.connect_closed(move |_| {
+            let host = state.borrow();
+            sync_region(&area, &host);
+            popover_c.unparent();
+        });
+    }
+
+    popover.popup();
+}
 
 pub fn run() {
     xtools_ui::boot::init_input_method_env();
@@ -642,6 +920,18 @@ pub fn run() {
             });
         }
         area.add_controller(drag);
+
+        // 4. Right-click context menu
+        let right_click = GestureClick::new();
+        right_click.set_button(gtk4::gdk::BUTTON_SECONDARY);
+        {
+            let state = Rc::clone(&state);
+            let area = area.clone();
+            right_click.connect_pressed(move |_, _n, x, y| {
+                show_context_menu(&area, &state, x, y);
+            });
+        }
+        area.add_controller(right_click);
 
         window.set_child(Some(&area));
         window.present();

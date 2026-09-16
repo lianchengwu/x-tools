@@ -26,7 +26,7 @@ impl XPlugin for TimePlugin {
         PluginManifest {
             id: "xtools.time".to_string(),
             name: "时间戳转换".to_string(),
-            version: "0.8.1".to_string(),
+            version: "0.8.2".to_string(),
             description: "Unix 秒/毫秒时间戳与本地时间双向转换工具".to_string(),
             author: "xtools".to_string(),
             mark: "clock".to_string(),

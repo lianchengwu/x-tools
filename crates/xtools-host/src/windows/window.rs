@@ -25,9 +25,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     HWND_TOPMOST, KillTimer, MSG, PostQuitMessage, RegisterClassExW, SW_HIDE, SW_SHOW,
     SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SetTimer, SetWindowLongPtrW, SetWindowPos,
     ShowWindow, SystemParametersInfoW, SPI_GETWORKAREA, SM_CXSCREEN, SM_CYSCREEN, ULW_ALPHA,
-    UpdateLayeredWindow, WM_COMMAND, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-    WM_NCHITTEST, WM_RBUTTONUP, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    UpdateLayeredWindow, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEMOVE, WM_NCHITTEST, WM_NCRBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_TIMER,
+    WNDCLASSEXW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use xtools_protocol::PluginManifest;
 use xtools_runtime::{DiscoveredPlugin, PluginLoader};
@@ -529,7 +529,7 @@ impl HostWindow {
 
     pub fn on_rbutton_up(&mut self) {
         if let Some(tray) = &self.tray {
-            tray.show_menu(self.hwnd, self.is_visible);
+            tray.show_menu(self.hwnd, self.is_visible, &self.plugins);
         }
     }
 
@@ -689,7 +689,18 @@ unsafe extern "system" fn window_proc(
                 host.on_lbutton_up(pt.x, pt.y);
                 0
             }
+            WM_RBUTTONDOWN => {
+                0
+            }
             WM_RBUTTONUP => {
+                host.on_rbutton_up();
+                0
+            }
+            WM_NCRBUTTONUP => {
+                host.on_rbutton_up();
+                0
+            }
+            WM_CONTEXTMENU => {
                 host.on_rbutton_up();
                 0
             }
@@ -710,9 +721,8 @@ unsafe extern "system" fn window_proc(
                     PostQuitMessage(0);
                 } else if id >= ID_TRAY_PLUGIN_BASE {
                     let idx = id - ID_TRAY_PLUGIN_BASE;
-                    let plugins = crate::runner::discover_plugins();
-                    if let Some(p) = plugins.get(idx) {
-                        crate::runner::launch_plugin(p);
+                    if let Some(p) = host.plugins.get(idx) {
+                        launch_plugin(p);
                     }
                 }
                 0

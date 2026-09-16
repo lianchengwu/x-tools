@@ -68,6 +68,33 @@ fn draw_codec_mark(cr: &cairo::Context, cx: f64, cy: f64, scale: f64) {
     cr.line_to(cx - 2.8 * s, cy + 5.2 * s);
     cr.stroke().ok();
 }
+fn draw_globe_mark(cr: &cairo::Context, cx: f64, cy: f64, scale: f64) {
+    let r = 6.2 * scale;
+    mark_color(cr);
+    cr.set_line_width((1.4 * scale).max(1.0));
+    cr.set_line_cap(cairo::LineCap::Round);
+    cr.set_line_join(cairo::LineJoin::Round);
+
+    // Outer circle
+    cr.new_sub_path();
+    cr.arc(cx, cy, r, 0.0, std::f64::consts::TAU);
+    cr.stroke().ok();
+
+    // Equator line
+    cr.new_sub_path();
+    cr.move_to(cx - r, cy);
+    cr.line_to(cx + r, cy);
+    cr.stroke().ok();
+
+    // Meridian ellipse
+    cr.save().ok();
+    cr.translate(cx, cy);
+    cr.scale(0.45, 1.0);
+    cr.new_sub_path();
+    cr.arc(0.0, 0.0, r, 0.0, std::f64::consts::TAU);
+    cr.restore().ok();
+    cr.stroke().ok();
+}
 
 fn draw_text_mark(cr: &cairo::Context, cx: f64, cy: f64, text: &str, scale: f64) {
     cr.select_font_face(
@@ -158,7 +185,7 @@ pub fn draw_func_dynamic(cr: &cairo::Context, mark: &str, cx: f64, cy: f64, t: f
         "clock" => draw_clock(cr, cx, cy, fr),
         "智" | "AI" => draw_ai_mark(cr, cx, cy, scale),
         "码" => draw_codec_mark(cr, cx, cy, scale),
-        "文" | "译" => draw_text_mark(cr, cx, cy, "译", scale),
+        "文" | "译" | "globe" => draw_globe_mark(cr, cx, cy, scale),
         _ => draw_text_mark(cr, cx, cy, mark, scale),
     }
     cr.restore().ok();

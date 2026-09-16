@@ -302,7 +302,7 @@ pub fn draw_func(surface: &mut Surface, mark: &str, cx: f64, cy: f64, t: f64, sc
     match mark {
         "clock" => draw_clock(surface, cx, cy, fr, color),
         "{}" => draw_json_mark(surface, cx, cy, scale, color),
-        "文" | "译" => draw_trans_mark(surface, cx, cy, scale, color),
+        "文" | "译" | "globe" => draw_trans_mark(surface, cx, cy, scale, color),
         "码" => draw_codec_mark(surface, cx, cy, scale, color),
         // AI 问答等其余工具：四角星光标
         "智" | "AI" | _ => draw_ai_mark(surface, cx, cy, scale, color),
@@ -333,29 +333,31 @@ fn draw_json_mark(surface: &mut Surface, cx: f64, cy: f64, scale: f64, color: Co
     surface.draw_line(rx, cy + 4.0 * s, rx - 2.0 * s, cy + 6.0 * s, stroke, color);
 }
 
-/// Draw Chinese character '译' mark for translate tool.
+/// Draw globe mark (🌐) for translate tool.
 fn draw_trans_mark(surface: &mut Surface, cx: f64, cy: f64, scale: f64, color: Color) {
-    let s = 1.0 * scale;
+    let r = 6.2 * scale;
     let stroke = (1.4 * scale).max(1.0);
 
-    // Left part: 讠 (言字旁)
-    // 1. 点 (丶)
-    surface.draw_line(cx - 5.5 * s, cy - 4.8 * s, cx - 4.2 * s, cy - 3.2 * s, stroke * 1.1, color);
-    // 2. 横折提
-    surface.draw_line(cx - 6.2 * s, cy - 1.2 * s, cx - 3.0 * s, cy - 1.2 * s, stroke, color);
-    surface.draw_line(cx - 4.6 * s, cy - 1.2 * s, cx - 4.6 * s, cy + 2.2 * s, stroke, color);
-    surface.draw_line(cx - 5.6 * s, cy + 4.6 * s, cx - 3.0 * s, cy + 2.0 * s, stroke, color);
+    // 1. Outer circle
+    surface.draw_circle_stroked(cx, cy, r, stroke, color);
 
-    // Right part: 尺
-    // 3. 顶部横折
-    surface.draw_line(cx - 0.5 * s, cy - 4.6 * s, cx + 4.8 * s, cy - 4.6 * s, stroke, color);
-    surface.draw_line(cx + 4.8 * s, cy - 4.6 * s, cx + 1.2 * s, cy - 1.2 * s, stroke, color);
-    // 4. 中间横
-    surface.draw_line(cx + 0.0 * s, cy - 1.2 * s, cx + 4.2 * s, cy - 1.2 * s, stroke, color);
-    // 5. 撇
-    surface.draw_line(cx + 1.8 * s, cy - 1.2 * s, cx - 1.2 * s, cy + 5.2 * s, stroke, color);
-    // 6. 捺
-    surface.draw_line(cx + 1.2 * s, cy + 0.5 * s, cx + 5.8 * s, cy + 5.2 * s, stroke, color);
+    // 2. Equator horizontal line
+    surface.draw_line(cx - r, cy, cx + r, cy, stroke, color);
+
+    // 3. Meridian ellipse (16-point antialiased polyline)
+    let a = r * 0.45;
+    let b = r;
+    const N: usize = 16;
+    let mut prev_x = cx + a;
+    let mut prev_y = cy;
+    for i in 1..=N {
+        let theta = (i as f64) * std::f64::consts::TAU / (N as f64);
+        let curr_x = cx + a * theta.cos();
+        let curr_y = cy + b * theta.sin();
+        surface.draw_line(prev_x, prev_y, curr_x, curr_y, stroke, color);
+        prev_x = curr_x;
+        prev_y = curr_y;
+    }
 }
 /// Draw stacked encode/decode arrows for the codec tool (mark "码").
 fn draw_codec_mark(surface: &mut Surface, cx: f64, cy: f64, scale: f64, color: Color) {
@@ -429,7 +431,7 @@ mod tests {
     #[test]
     fn draw_func_renders_all_marks() {
         let mut surface = Surface::new(200, 200);
-        for mark in ["clock", "{}", "文", "译", "智", "AI", "码", "unknown-fallback"] {
+        for mark in ["clock", "{}", "文", "译", "globe", "智", "AI", "码", "unknown-fallback"] {
             surface.clear();
             draw_func(&mut surface, mark, 100.0, 100.0, 1.0, 1.0);
             let center_idx = 100 * 200 + 100;
