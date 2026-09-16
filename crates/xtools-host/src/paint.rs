@@ -19,6 +19,55 @@ fn draw_clock(cr: &cairo::Context, cx: f64, cy: f64, fr: f64) {
     cr.line_to(cx + fr * 0.16, cy + fr * 0.04);
     cr.stroke().ok();
 }
+fn draw_ai_mark(cr: &cairo::Context, cx: f64, cy: f64, scale: f64) {
+    mark_color(cr);
+    cr.set_line_width((1.8 * scale).max(1.2));
+    cr.set_line_cap(cairo::LineCap::Round);
+    cr.set_line_join(cairo::LineJoin::Round);
+
+    let r_out = 6.0 * scale;
+    let r_in = 1.8 * scale;
+    cr.new_sub_path();
+    cr.move_to(cx, cy - r_out);
+    cr.line_to(cx + r_in, cy - r_in);
+    cr.line_to(cx + r_out, cy);
+    cr.line_to(cx + r_in, cy + r_in);
+    cr.line_to(cx, cy + r_out);
+    cr.line_to(cx - r_in, cy + r_in);
+    cr.line_to(cx - r_out, cy);
+    cr.line_to(cx - r_in, cy - r_in);
+    cr.close_path();
+    cr.stroke().ok();
+
+    cr.new_sub_path();
+    cr.arc(cx, cy, 0.9 * scale, 0.0, std::f64::consts::TAU);
+    cr.fill().ok();
+}
+
+fn draw_codec_mark(cr: &cairo::Context, cx: f64, cy: f64, scale: f64) {
+    let s = 1.0 * scale;
+    let stroke = (1.5 * scale).max(1.0);
+    mark_color(cr);
+    cr.set_line_width(stroke);
+    cr.set_line_cap(cairo::LineCap::Round);
+    cr.set_line_join(cairo::LineJoin::Round);
+
+    // Top arrow (points right)
+    cr.new_sub_path();
+    cr.move_to(cx - 6.0 * s, cy - 2.6 * s);
+    cr.line_to(cx + 6.0 * s, cy - 2.6 * s);
+    cr.move_to(cx + 2.8 * s, cy - 5.2 * s);
+    cr.line_to(cx + 6.0 * s, cy - 2.6 * s);
+    cr.line_to(cx + 2.8 * s, cy + 0.0 * s);
+
+    // Bottom arrow (points left)
+    cr.move_to(cx + 6.0 * s, cy + 2.6 * s);
+    cr.line_to(cx - 6.0 * s, cy + 2.6 * s);
+    cr.move_to(cx - 2.8 * s, cy + 0.0 * s);
+    cr.line_to(cx - 6.0 * s, cy + 2.6 * s);
+    cr.line_to(cx - 2.8 * s, cy + 5.2 * s);
+    cr.stroke().ok();
+}
 
 fn draw_text_mark(cr: &cairo::Context, cx: f64, cy: f64, text: &str, scale: f64) {
     cr.select_font_face(
@@ -105,10 +154,28 @@ pub fn draw_func_dynamic(cr: &cairo::Context, mark: &str, cx: f64, cy: f64, t: f
     cr.arc(cx, cy, fr, 0.0, std::f64::consts::TAU);
     cr.stroke().ok();
 
-    if mark == "clock" {
-        draw_clock(cr, cx, cy, fr);
-    } else {
-        draw_text_mark(cr, cx, cy, mark, scale);
+    match mark {
+        "clock" => draw_clock(cr, cx, cy, fr),
+        "智" | "AI" => draw_ai_mark(cr, cx, cy, scale),
+        "码" => draw_codec_mark(cr, cx, cy, scale),
+        "文" | "译" => draw_text_mark(cr, cx, cy, "译", scale),
+        _ => draw_text_mark(cr, cx, cy, mark, scale),
     }
     cr.restore().ok();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn draw_func_dynamic_renders_all_marks() {
+        let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 200, 200)
+            .expect("create cairo image surface");
+        let cr = cairo::Context::new(&surface).expect("create cairo context");
+
+        for mark in ["clock", "{}", "文", "译", "智", "AI", "码", "unknown-fallback"] {
+            draw_func_dynamic(&cr, mark, 100.0, 100.0, 1.0, 1.0);
+        }
+    }
 }

@@ -333,21 +333,30 @@ fn draw_json_mark(surface: &mut Surface, cx: f64, cy: f64, scale: f64, color: Co
     surface.draw_line(rx, cy + 4.0 * s, rx - 2.0 * s, cy + 6.0 * s, stroke, color);
 }
 
-/// Draw Chinese character '文' mark for translate tool.
+/// Draw Chinese character '译' mark for translate tool.
 fn draw_trans_mark(surface: &mut Surface, cx: f64, cy: f64, scale: f64, color: Color) {
     let s = 1.0 * scale;
-    let stroke = (1.5 * scale).max(1.0);
+    let stroke = (1.4 * scale).max(1.0);
 
-    // Top dot/tick: '丶'
-    surface.draw_line(cx, cy - 6.0 * s, cx, cy - 4.0 * s, stroke * 1.1, color);
-    // Horizontal bar: '一'
-    surface.draw_line(cx - 6.0 * s, cy - 3.2 * s, cx + 6.0 * s, cy - 3.2 * s, stroke, color);
-    // Left diagonal sweep: '丿'
-    surface.draw_line(cx + 1.5 * s, cy - 2.0 * s, cx - 5.5 * s, cy + 6.0 * s, stroke, color);
-    // Right diagonal sweep: '捺'
-    surface.draw_line(cx - 1.5 * s, cy - 2.0 * s, cx + 5.5 * s, cy + 6.0 * s, stroke, color);
+    // Left part: 讠 (言字旁)
+    // 1. 点 (丶)
+    surface.draw_line(cx - 5.5 * s, cy - 4.8 * s, cx - 4.2 * s, cy - 3.2 * s, stroke * 1.1, color);
+    // 2. 横折提
+    surface.draw_line(cx - 6.2 * s, cy - 1.2 * s, cx - 3.0 * s, cy - 1.2 * s, stroke, color);
+    surface.draw_line(cx - 4.6 * s, cy - 1.2 * s, cx - 4.6 * s, cy + 2.2 * s, stroke, color);
+    surface.draw_line(cx - 5.6 * s, cy + 4.6 * s, cx - 3.0 * s, cy + 2.0 * s, stroke, color);
+
+    // Right part: 尺
+    // 3. 顶部横折
+    surface.draw_line(cx - 0.5 * s, cy - 4.6 * s, cx + 4.8 * s, cy - 4.6 * s, stroke, color);
+    surface.draw_line(cx + 4.8 * s, cy - 4.6 * s, cx + 1.2 * s, cy - 1.2 * s, stroke, color);
+    // 4. 中间横
+    surface.draw_line(cx + 0.0 * s, cy - 1.2 * s, cx + 4.2 * s, cy - 1.2 * s, stroke, color);
+    // 5. 撇
+    surface.draw_line(cx + 1.8 * s, cy - 1.2 * s, cx - 1.2 * s, cy + 5.2 * s, stroke, color);
+    // 6. 捺
+    surface.draw_line(cx + 1.2 * s, cy + 0.5 * s, cx + 5.8 * s, cy + 5.2 * s, stroke, color);
 }
-
 /// Draw stacked encode/decode arrows for the codec tool (mark "码").
 fn draw_codec_mark(surface: &mut Surface, cx: f64, cy: f64, scale: f64, color: Color) {
     let s = 1.0 * scale;
