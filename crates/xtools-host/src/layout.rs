@@ -80,18 +80,22 @@ pub fn fan_seats_dynamic(
 
     let fr = func_radius() * scale;
     let base_orbit = orbit_radius() * scale;
+    // Minimum gap between adjacent function balls so they never overlap
+    let min_ball_gap = 8.0 * scale;
 
     // Distribute angles evenly around top arc (-90 deg center)
     let angles: Vec<f64> = match count {
         1 => vec![deg_to_rad(-90.0)],
         2 => vec![deg_to_rad(-125.0), deg_to_rad(-55.0)],
         3 => vec![deg_to_rad(-150.0), deg_to_rad(-90.0), deg_to_rad(-30.0)],
-        4 => vec![
-            deg_to_rad(-155.0),
-            deg_to_rad(-115.0),
-            deg_to_rad(-65.0),
-            deg_to_rad(-25.0),
-        ],
+        4 => {
+            let start_deg = -155.0;
+            let end_deg = -25.0;
+            let step = (end_deg - start_deg) / 3.0;
+            (0..4)
+                .map(|i| deg_to_rad(start_deg + i as f64 * step))
+                .collect()
+        }
         _ => {
             let start_deg = -160.0;
             let end_deg = -20.0;
@@ -102,10 +106,29 @@ pub fn fan_seats_dynamic(
         }
     };
 
+    // Calculate minimum angular separation between adjacent seats
+    let min_delta_angle = if angles.len() >= 2 {
+        angles
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(f64::INFINITY, f64::min)
+    } else {
+        f64::INFINITY
+    };
+
+    // Ensure orbit radius is large enough so adjacent disks do not overlap:
+    // 2 * R * sin(delta / 2) >= 2 * fr + min_ball_gap
+    let orbit = if min_delta_angle.is_finite() && min_delta_angle > 0.0 {
+        let needed_orbit = (fr + min_ball_gap * 0.5) / (min_delta_angle * 0.5).sin();
+        base_orbit.max(needed_orbit)
+    } else {
+        base_orbit
+    };
+
     // Attempt default radius
     let mut seats: Vec<(f64, f64)> = angles
         .iter()
-        .map(|&a| seat_at(main, a, base_orbit))
+        .map(|&a| seat_at(main, a, orbit))
         .collect();
 
     let all_inside = seats.iter().all(|&pt| disk_inside(pt, fr, monitor));
@@ -118,7 +141,7 @@ pub fn fan_seats_dynamic(
         let rot = deg_to_rad(delta_deg);
         let cand: Vec<(f64, f64)> = angles
             .iter()
-            .map(|&a| seat_at(main, a + rot, base_orbit))
+            .map(|&a| seat_at(main, a + rot, orbit))
             .collect();
         if cand.iter().all(|&pt| disk_inside(pt, fr, monitor)) {
             return cand;
@@ -137,4 +160,58 @@ pub fn hit_disk(px: f64, py: f64, cx: f64, cy: f64, r: f64) -> bool {
     let dx = px - cx;
     let dy = py - cy;
     dx * dx + dy * dy <= r * r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtools_ui::func_radius;
+
+    #[test]
+    fn test_fan_seats_dynamic_no_overlap_for_discovered_plugins() {
+        let mon = Rect::new(0.0, 0.0, 1920.0, 1080.0);
+        let main = (960.0, 540.0);
+
+        for count in 2..=8 {
+            for scale in [1.0, 1.25, 1.5, 2.0] {
+                let fr = func_radius() * scale;
+                let min_dist = 2.0 * fr; // diameters must not overlap
+                let seats = fan_seats_dynamic(main, count, mon, scale);
+                assert_eq!(seats.len(), count);
+
+                for i in 0..seats.len() - 1 {
+                    let (x1, y1) = seats[i];
+                    let (x2, y2) = seats[i + 1];
+                    let dist = ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt();
+                    assert!(
+                        dist >= min_dist,
+                        "count={count} scale={scale}: seat {i} and {} overlap! dist={dist:.2} < min_dist={min_dist:.2}",
+                        i + 1
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_fan_seats_fits_inside_window() {
+        let scale = 1.0;
+        let win_size = 280.0;
+        let mon = Rect::new(0.0, 0.0, win_size, win_size);
+        let fr = func_radius() * scale;
+        let main = (win_size / 2.0, win_size - 20.0 - 12.0);
+
+        let seats = fan_seats_dynamic(main, 5, mon, scale);
+        assert_eq!(seats.len(), 5);
+        for (idx, (x, y)) in seats.iter().enumerate() {
+            assert!(
+                x - fr >= 0.0 && x + fr <= win_size,
+                "seat {idx} x out of bounds: x={x}, fr={fr}"
+            );
+            assert!(
+                y - fr >= 0.0 && y + fr <= win_size,
+                "seat {idx} y out of bounds: y={y}, fr={fr}"
+            );
+        }
+    }
 }

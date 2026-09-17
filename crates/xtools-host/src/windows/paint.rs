@@ -1,7 +1,7 @@
 //! Windows 32-bit ARGB software rendering for the floating ball and orbital menu.
 //! 平台无关的纯软件渲染（cfg(any(windows, test)) 下在 Linux 测试中同样编译）。
 
-use xtools_ui::{Color, ORB_FILL, ORB_MARK, func_radius, main_radius};
+use xtools_ui::{Color, ORB_FILL, ORB_MARK, func_radius};
 
 /// 32-bit ARGB (premultiplied alpha) pixel surface.
 pub struct Surface {
@@ -257,19 +257,6 @@ fn draw_main_mark(surface: &mut Surface, cx: f64, cy: f64, scale: f64, color: Co
 
 /// Draw the main floating ball.
 pub fn draw_main(surface: &mut Surface, cx: f64, cy: f64, scale: f64) {
-    let r = main_radius() * scale;
-    // Shadow
-    surface.draw_disk_shadow(cx, cy, r, 1.0);
-    // White body
-    surface.draw_circle_filled(cx, cy, r, ORB_FILL);
-    // Outer hairline border
-    surface.draw_circle_stroked(
-        cx,
-        cy,
-        r - 0.5,
-        (1.0 * scale).max(1.0),
-        Color::rgba(ORB_MARK.r, ORB_MARK.g, ORB_MARK.b, 0.15),
-    );
     // Render the real app icon (SVG)
     let icon_size = (32.0 * scale).round() as u32;
     if let Some(pixmap) = render_svg_icon(icon_size) {
@@ -288,7 +275,7 @@ pub fn draw_func(surface: &mut Surface, mark: &str, cx: f64, cy: f64, t: f64, sc
     }
     let t = t.clamp(0.0, 1.0);
     let fr = func_radius() * scale;
-    let fill = Color::rgba(ORB_FILL.r, ORB_FILL.g, ORB_FILL.b, t);
+    let fill = Color::rgba(ORB_FILL.r, ORB_FILL.g, ORB_FILL.b, ORB_FILL.a * t);
     let border = Color::rgba(ORB_MARK.r, ORB_MARK.g, ORB_MARK.b, 0.20 * t);
     let color = Color::rgba(ORB_MARK.r, ORB_MARK.g, ORB_MARK.b, t);
 
@@ -402,11 +389,9 @@ mod tests {
         assert!(surface.pixels.iter().all(|&p| p == 0));
 
         draw_main(&mut surface, 50.0, 50.0, 1.0);
-        // Center of main ball should be non-transparent
-        let center_idx = 50 * 100 + 50;
-        let center_pixel = surface.pixels[center_idx];
-        let alpha = (center_pixel >> 24) & 0xFF;
-        assert!(alpha > 200, "center of main ball should have high alpha");
+        // Main ball should render non-transparent icon pixels
+        let non_transparent_count = surface.pixels.iter().filter(|&&p| ((p >> 24) & 0xFF) > 0).count();
+        assert!(non_transparent_count > 0, "main ball should draw non-transparent pixels");
 
         // Corner (0, 0) should remain 100% transparent
         assert_eq!(surface.pixels[0], 0, "corner should be transparent");

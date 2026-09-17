@@ -323,11 +323,6 @@ fn primary_monitor_info() -> MonitorInfo {
     }
 }
 
-fn primary_output_size() -> (i32, i32) {
-    let info = primary_monitor_info();
-    (info.logical_width, info.logical_height)
-}
-
 fn seat_surface(area: &DrawingArea, host: &mut Host) {
     let w = f64::from(area.width());
     let h = f64::from(area.height());
@@ -338,8 +333,8 @@ fn seat_surface(area: &DrawingArea, host: &mut Host) {
     host.monitor = rect;
     if !host.seated {
         let r = host.main_r();
-        let bottom_margin = 12.0 * host.vis();
-        host.main = (w / 2.0, h - r - bottom_margin);
+        let right_margin = 16.0 * host.vis();
+        host.main = (w - r - right_margin, h / 2.0);
         host.origin_main = host.main;
         host.seated = true;
         eprintln!(
@@ -757,29 +752,27 @@ pub fn run() {
             f64::from(mon_info.logical_height),
             mon_info.scale_factor,
         );
-        let win_size = (280.0 * scale).round() as i32;
-
         let window = ApplicationWindow::builder()
             .application(app)
             .title("xtools host (WASM)")
-            .default_width(win_size)
-            .default_height(win_size)
+            .default_width(mon_info.logical_width)
+            .default_height(mon_info.logical_height)
             .decorated(false)
             .build();
 
         overlay::attach_overlay(&window);
-        window.set_default_size(win_size, win_size);
 
         let area = DrawingArea::builder()
-            .content_width(win_size)
-            .content_height(win_size)
             .hexpand(true)
             .vexpand(true)
             .build();
 
+        let init_x = f64::from(mon_info.logical_width) - main_radius() * scale - 16.0 * scale;
+        let init_y = f64::from(mon_info.logical_height) / 2.0;
+
         let state = Rc::new(RefCell::new(Host {
-            main: (win_size as f64 / 2.0, win_size as f64 / 2.0),
-            origin_main: (win_size as f64 / 2.0, win_size as f64 / 2.0),
+            main: (init_x, init_y),
+            origin_main: (init_x, init_y),
             monitor: Rect::new(0.0, 0.0, f64::from(mon_info.logical_width), f64::from(mon_info.logical_height)),
             scale,
             menu: Menu::Collapsed,
@@ -836,10 +829,6 @@ pub fn run() {
                 let host = state.borrow();
                 if host.seated {
                     sync_region(area, &host);
-                    if let Some(win) = area.root().and_downcast::<ApplicationWindow>() {
-                        let (_sw, sh) = primary_output_size();
-                        overlay::place_mid_right(&win, sh, host.main.1);
-                    }
                 }
                 area.queue_draw();
             });
@@ -855,10 +844,6 @@ pub fn run() {
                 let host = state.borrow();
                 if host.seated {
                     sync_region(area, &host);
-                    if let Some(win) = area.root().and_downcast::<ApplicationWindow>() {
-                        let (_sw, sh) = primary_output_size();
-                        overlay::place_mid_right(&win, sh, host.main.1);
-                    }
                 }
                 area.queue_draw();
             });
@@ -890,6 +875,7 @@ pub fn run() {
                         snap_collapse(&area, &state);
                     }
                     state.borrow_mut().dragging = true;
+                    input::apply_expanded_from_widget(&area);
                 }
                 if state.borrow().dragging {
                     let mut host = state.borrow_mut();

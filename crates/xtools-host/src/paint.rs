@@ -169,13 +169,23 @@ pub fn draw_func_dynamic(cr: &cairo::Context, mark: &str, cx: f64, cy: f64, t: f
     if t <= 0.0 {
         return;
     }
+    let t = t.clamp(0.0, 1.0);
     let fr = func_radius() * scale;
     cr.save().ok();
-    cr.set_source_rgba(ORB_FILL.r, ORB_FILL.g, ORB_FILL.b, t.clamp(0.0, 1.0));
+    // Drop shadow under function orb
+    cr.set_source_rgba(0.0, 0.0, 0.0, 0.12 * t);
+    cr.new_sub_path();
+    cr.arc(cx, cy + 1.5 * scale, fr, 0.0, std::f64::consts::TAU);
+    cr.fill().ok();
+
+    // Pure white translucent body
+    cr.set_source_rgba(ORB_FILL.r, ORB_FILL.g, ORB_FILL.b, ORB_FILL.a * t);
     cr.new_sub_path();
     cr.arc(cx, cy, fr, 0.0, std::f64::consts::TAU);
     cr.fill().ok();
-    cr.set_source_rgba(ORB_MARK.r, ORB_MARK.g, ORB_MARK.b, 0.20 * t.clamp(0.0, 1.0));
+
+    // Hairline border
+    cr.set_source_rgba(ORB_MARK.r, ORB_MARK.g, ORB_MARK.b, 0.20 * t);
     cr.set_line_width((1.0 * scale).max(1.0));
     cr.new_sub_path();
     cr.arc(cx, cy, fr, 0.0, std::f64::consts::TAU);
@@ -204,5 +214,13 @@ mod tests {
         for mark in ["clock", "{}", "文", "译", "智", "AI", "码", "unknown-fallback"] {
             draw_func_dynamic(&cr, mark, 100.0, 100.0, 1.0, 1.0);
         }
+    }
+
+    #[test]
+    fn draw_main_renders() {
+        let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 100, 100)
+            .expect("create cairo image surface");
+        let cr = cairo::Context::new(&surface).expect("create cairo context");
+        draw_main(&cr, 50.0, 50.0, 1.0);
     }
 }
