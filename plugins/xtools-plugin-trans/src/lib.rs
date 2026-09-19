@@ -115,44 +115,54 @@ impl XPlugin for TransPlugin {
 
         let mut children = Vec::new();
 
-        // 1. Top Bar: Section Title + Engine Selector
+        // 1. Top Bar: Engine tabs + Language selectors (src ⇄ dst)
         children.push(row(vec![
-            label("原文 (Source)"),
-            spacer(),
             select("select_engine", engine_options, self.config.engine_index),
+            spacer(),
+            select("select_src_lang", src_options, self.src_lang_idx),
+            button("btn_swap_lang", "⇄"),
+            select("select_dst_lang", dst_options, self.dst_lang_idx),
         ]));
 
         // 2. Source Text Input
-        children.push(text_area(
-            "input_source",
-            &self.source_text,
-            5,
-        ));
+        children.push(label("原文 (Source)"));
+        children.push(UiNode::TextInput {
+            id: "input_source".to_string(),
+            label: None,
+            value: self.source_text.clone(),
+            placeholder: "输入或粘贴要翻译的文本…".to_string(),
+            multiline: true,
+            readonly: false,
+            rows: Some(8),
+            on_change: true,
+            monospace: false,
+        });
 
-        // 3. Middle Action Bar: Language selectors + Swap button + Translate button
+        // 3. Action Bar: primary translate first, then selection translate
         let translate_btn_label = if self.pending {
             "翻译中…"
         } else {
             "翻译"
         };
-
-        let lang_bar = row(vec![
-            select("select_src_lang", src_options, self.src_lang_idx),
-            button("btn_swap_lang", "⇄"),
-            select("select_dst_lang", dst_options, self.dst_lang_idx),
-            spacer(),
-            button("btn_auto_translate", "🔤 划词翻译"),
+        children.push(row(vec![
             primary_button("btn_translate", translate_btn_label),
-        ]);
-        children.push(lang_bar);
+            button("btn_auto_translate", "🖱 划词翻译"),
+            spacer(),
+        ]));
 
-        // 4. Target Text Label & Output Area
+        // 4. Target Label & read-only Output Area
         children.push(label("译文 (Translation)"));
-        children.push(text_area(
-            "input_target",
-            &self.target_text,
-            5,
-        ));
+        children.push(UiNode::TextInput {
+            id: "input_target".to_string(),
+            label: None,
+            value: self.target_text.clone(),
+            placeholder: "译文将显示在此处…".to_string(),
+            multiline: true,
+            readonly: true,
+            rows: Some(8),
+            on_change: false,
+            monospace: false,
+        });
 
         // 5. Bottom Bar: Status / Error Note + Action buttons
         let mut bottom_items = Vec::new();

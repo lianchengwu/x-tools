@@ -1242,9 +1242,79 @@ export component RunnerWindow inherits Window {
                 alignment: stretch;
                 vertical-stretch: 1;
 
-                // Top Bar: Section Title + Engine Selector
+                // 1. 顶部导航：引擎分段 Tab（左）+ 源/目标语言选择（右），与 codec/json 分段风格统一
                 HorizontalLayout {
                     spacing: 8px;
+                    alignment: space-between;
+
+                    Rectangle {
+                        border-radius: Theme.radius-control;
+                        background: Theme.secondary-hover;
+                        height: 34px;
+
+                        HorizontalLayout {
+                            padding: 3px;
+                            spacing: 3px;
+
+                            for opt[idx] in root.trans-engine-options : Rectangle {
+                                border-radius: Theme.radius-control - 2px;
+                                background: root.trans-engine-idx == idx
+                                    ? Theme.card-bg
+                                    : (engine-touch.has-hover ? Theme.secondary : Colors.transparent);
+                                border-width: root.trans-engine-idx == idx ? 1px : 0px;
+                                border-color: root.trans-engine-idx == idx ? Theme.border-subtle : Colors.transparent;
+
+                                animate background { duration: 120ms; }
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    alignment: center;
+                                    Text {
+                                        text: opt;
+                                        font-size: Theme.font-size-small;
+                                        font-weight: root.trans-engine-idx == idx ? 600 : 500;
+                                        color: root.trans-engine-idx == idx
+                                            ? Theme.primary
+                                            : (engine-touch.has-hover ? Theme.foreground : Theme.muted);
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                engine-touch := TouchArea {
+                                    clicked => { root.trans-engine-changed(idx); }
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: end;
+
+                        DropdownSelector {
+                            options: root.trans-src-options;
+                            selected-index <=> root.trans-src-idx;
+                            selector-width: 112px;
+                            selection-changed(idx) => { root.trans-src-changed(idx); }
+                        }
+
+                        IconButton {
+                            icon: "⇄";
+                            clicked => { root.trans-swap(); }
+                        }
+
+                        DropdownSelector {
+                            options: root.trans-dst-options;
+                            selected-index <=> root.trans-dst-idx;
+                            selector-width: 112px;
+                            selection-changed(idx) => { root.trans-dst-changed(idx); }
+                        }
+                    }
+                }
+
+                // 2. 原文标题行 + 快捷键提示（与 codec 一致）
+                HorizontalLayout {
                     alignment: space-between;
 
                     Text {
@@ -1255,24 +1325,11 @@ export component RunnerWindow inherits Window {
                         vertical-alignment: center;
                     }
 
-                    HorizontalLayout {
-                        spacing: 6px;
-                        alignment: end;
-
-                        Text {
-                            text: "引擎：";
-                            font-size: Theme.font-size-small;
-                            font-weight: 500;
-                            color: Theme.muted;
-                            vertical-alignment: center;
-                        }
-
-                        DropdownSelector {
-                            options: root.trans-engine-options;
-                            selected-index <=> root.trans-engine-idx;
-                            selector-width: 140px;
-                            selection-changed(idx) => { root.trans-engine-changed(idx); }
-                        }
+                    Text {
+                        text: "Enter 翻译 · Shift+Enter 换行";
+                        font-size: 11px;
+                        color: Theme.muted;
+                        vertical-alignment: center;
                     }
                 }
 
@@ -1289,55 +1346,38 @@ export component RunnerWindow inherits Window {
                     edited(t) => { root.trans-source-edited(t); }
                 }
 
+                // 3. 动作条：主按钮在前，与 codec 转换动作条布局一致
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: stretch;
 
-                    DropdownSelector {
-                        label: "源：";
-                        options: root.trans-src-options;
-                        selected-index <=> root.trans-src-idx;
-                        selector-width: 112px;
-                        selection-changed(idx) => { root.trans-src-changed(idx); }
+                    ActionButton {
+                        text: root.trans-pending ? "翻译中…" : "翻译";
+                        is-primary: true;
+                        min-btn-width: 76px;
+                        enabled: !root.trans-pending && root.trans-source != "";
+                        clicked => { root.trans-translate(); }
                     }
 
-                    IconButton {
-                        icon: "⇄";
-                        clicked => { root.trans-swap(); }
-                    }
-
-                    DropdownSelector {
-                        label: "目标：";
-                        options: root.trans-dst-options;
-                        selected-index <=> root.trans-dst-idx;
-                        selector-width: 112px;
-                        selection-changed(idx) => { root.trans-dst-changed(idx); }
+                    ActionButton {
+                        text: "🖱 划词翻译";
+                        min-btn-width: 76px;
+                        enabled: !root.trans-pending;
+                        clicked => { root.trans-auto-translate(); }
                     }
 
                     Rectangle {
                         horizontal-stretch: 1;
                     }
-
-                    ActionButton {
-                        text: "🔤 划词翻译";
-                        is-primary: false;
-                        enabled: !root.trans-pending;
-                        clicked => { root.trans-auto-translate(); }
-                    }
-
-                    ActionButton {
-                        text: root.trans-pending ? "翻译中…" : "翻译";
-                        is-primary: true;
-                        enabled: !root.trans-pending && root.trans-source != "";
-                        clicked => { root.trans-translate(); }
-                    }
                 }
 
+                // 4. 译文标题 + 只读输出区
                 Text {
                     text: "译文 (Translation)";
                     font-size: Theme.font-size-small;
                     font-weight: 600;
                     color: Theme.muted;
+                    vertical-alignment: center;
                 }
 
                 MultilineEditor {
