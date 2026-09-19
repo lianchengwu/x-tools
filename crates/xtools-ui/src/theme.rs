@@ -31,7 +31,7 @@ pub const MAIN_D: f64 = 40.0;
 pub const FUNC_D: f64 = 32.0;
 
 /// Gap between main and function disks. Disks must not overlap.
-pub const GAP: f64 = 8.0;
+pub const GAP: f64 = 6.0;
 
 /// Click vs drag slop in logical px (D-14).
 pub const SLOP: f64 = 8.0;

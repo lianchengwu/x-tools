@@ -81,7 +81,7 @@ pub fn fan_seats_dynamic(
     let fr = func_radius() * scale;
     let base_orbit = orbit_radius() * scale;
     // Minimum gap between adjacent function balls so they never overlap
-    let min_ball_gap = 8.0 * scale;
+    let min_ball_gap = 4.0 * scale;
 
     // Distribute angles evenly around top arc (-90 deg center)
     let angles: Vec<f64> = match count {
