@@ -21,7 +21,7 @@ impl XPlugin for JsonPlugin {
         PluginManifest {
             id: "xtools.json".to_string(),
             name: "JSON 格式化与校验".to_string(),
-            version: "0.8.4".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
             description: "JSON 格式化、压缩、去转义、语法校验与树形折叠工具".to_string(),
             author: "xtools".to_string(),
             mark: "{}".to_string(),
