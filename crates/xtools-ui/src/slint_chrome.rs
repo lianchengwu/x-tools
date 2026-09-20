@@ -313,6 +313,195 @@ pub fn setup_raise_timer(
     setup_raise_timer_with_callback(listener, window, |_| {})
 }
 
+/// Tracks whether a window has lost focus continuously for a specified duration.
+#[derive(Clone, Debug)]
+pub struct FocusLossTracker {
+    timeout: Duration,
+    startup_grace: Duration,
+    started_at: std::time::Instant,
+    has_ever_focused: bool,
+    lost_focus_at: Option<std::time::Instant>,
+}
+
+impl FocusLossTracker {
+    pub fn new(timeout: Duration) -> Self {
+        Self {
+            timeout,
+            startup_grace: Duration::from_secs(3),
+            started_at: std::time::Instant::now(),
+            has_ever_focused: false,
+            lost_focus_at: None,
+        }
+    }
+
+    pub fn with_startup_grace(
+        timeout: Duration,
+        startup_grace: Duration,
+        started_at: std::time::Instant,
+    ) -> Self {
+        Self {
+            timeout,
+            startup_grace,
+            started_at,
+            has_ever_focused: false,
+            lost_focus_at: None,
+        }
+    }
+
+    /// Ticks the state machine with the current engagement status.
+    /// Returns `true` if the timeout has expired and the window should exit.
+    pub fn tick(&mut self, is_engaged: bool, now: std::time::Instant) -> bool {
+        if is_engaged {
+            self.has_ever_focused = true;
+            self.lost_focus_at = None;
+            return false;
+        }
+
+        // If never engaged yet and within startup grace period, do not start countdown
+        if !self.has_ever_focused && now.saturating_duration_since(self.started_at) < self.startup_grace {
+            return false;
+        }
+
+        match self.lost_focus_at {
+            None => {
+                self.lost_focus_at = Some(now);
+                false
+            }
+            Some(lost_at) => now.saturating_duration_since(lost_at) >= self.timeout,
+        }
+    }
+
+    pub fn is_counting_down(&self) -> bool {
+        self.lost_focus_at.is_some()
+    }
+}
+
+#[cfg(windows)]
+pub fn is_window_engaged(hwnd: Option<windows_sys::Win32::Foundation::HWND>) -> bool {
+    use windows_sys::Win32::Foundation::{POINT, RECT};
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetCursorPos, GetForegroundWindow, GetWindowRect, GetWindowThreadProcessId,
+    };
+
+    let foreground = unsafe { GetForegroundWindow() };
+    if !foreground.is_null() {
+        let mut foreground_pid = 0u32;
+        unsafe {
+            GetWindowThreadProcessId(foreground, &mut foreground_pid);
+        }
+        if foreground_pid == unsafe { GetCurrentProcessId() } {
+            return true;
+        }
+    }
+
+    if let Some(hwnd) = hwnd {
+        let mut pt = POINT { x: 0, y: 0 };
+        if unsafe { GetCursorPos(&mut pt) } != 0 {
+            let mut rect = RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            if unsafe { GetWindowRect(hwnd, &mut rect) } != 0 {
+                if pt.x >= rect.left && pt.x < rect.right && pt.y >= rect.top && pt.y < rect.bottom {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Start a timer that automatically exits the process when the window has lost
+/// focus continuously for `timeout`.
+///
+/// If the window regains focus, the mouse is hovered over the window, or `is_busy()` returns true,
+/// the countdown is reset.
+#[cfg(all(windows, feature = "slint-chrome"))]
+pub fn setup_focus_loss_timer<C, B>(
+    window: slint::Weak<C>,
+    timeout: Duration,
+    mut is_busy: B,
+) -> slint::Timer
+where
+    C: slint::ComponentHandle + 'static,
+    B: FnMut(&C) -> bool + 'static,
+{
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use i_slint_backend_winit::WinitWindowAccessor;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let timer = slint::Timer::default();
+    let tracker = Rc::new(RefCell::new(FocusLossTracker::new(timeout)));
+    let cached_hwnd = Rc::new(RefCell::new(Option::<windows_sys::Win32::Foundation::HWND>::None));
+
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_millis(200),
+        move || {
+            let Some(ui) = window.upgrade() else {
+                return;
+            };
+
+            // If the application is busy (e.g. AI generating, translation in progress), keep alive
+            if is_busy(&ui) {
+                tracker.borrow_mut().tick(true, std::time::Instant::now());
+                return;
+            }
+
+            let mut hwnd = *cached_hwnd.borrow();
+            if hwnd.is_none() {
+                ui.window().with_winit_window(|w| {
+                    if let Ok(handle) = w.window_handle() {
+                        if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+                            let h = win32.hwnd.get() as isize as windows_sys::Win32::Foundation::HWND;
+                            hwnd = Some(h);
+                        }
+                    }
+                });
+                *cached_hwnd.borrow_mut() = hwnd;
+            }
+
+            let engaged = is_window_engaged(hwnd);
+            let should_exit = tracker.borrow_mut().tick(engaged, std::time::Instant::now());
+            if should_exit {
+                log::info!("xtools: window lost focus for {:?}, auto-exiting", timeout);
+                let _ = ui.hide();
+                std::process::exit(0);
+            }
+        },
+    );
+
+    timer
+}
+
+#[cfg(not(all(windows, feature = "slint-chrome")))]
+pub fn setup_focus_loss_timer<C, B>(
+    _window: slint::Weak<C>,
+    _timeout: Duration,
+    _is_busy: B,
+) -> slint::Timer
+where
+    C: slint::ComponentHandle + 'static,
+    B: FnMut(&C) -> bool + 'static,
+{
+    slint::Timer::default()
+}
+
+pub fn setup_focus_loss_timer_simple<C>(
+    window: slint::Weak<C>,
+    timeout: Duration,
+) -> slint::Timer
+where
+    C: slint::ComponentHandle + 'static,
+{
+    setup_focus_loss_timer(window, timeout, |_| false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,5 +543,91 @@ mod tests {
         assert!(exp2);
         let restored2 = resize.toggle_expand(win.window(), 100, 100, 200, 200);
         assert!(!restored2);
+    }
+
+    #[test]
+    fn test_focus_loss_tracker_stays_alive_while_engaged() {
+        let t0 = std::time::Instant::now();
+        let mut tracker = FocusLossTracker::with_startup_grace(
+            Duration::from_secs(10),
+            Duration::from_secs(3),
+            t0,
+        );
+
+        // Kept engaged
+        assert!(!tracker.tick(true, t0));
+        assert!(!tracker.is_counting_down());
+
+        let t1 = t0 + Duration::from_secs(15);
+        assert!(!tracker.tick(true, t1));
+        assert!(!tracker.is_counting_down());
+    }
+
+    #[test]
+    fn test_focus_loss_tracker_startup_grace() {
+        let t0 = std::time::Instant::now();
+        let mut tracker = FocusLossTracker::with_startup_grace(
+            Duration::from_secs(10),
+            Duration::from_secs(3),
+            t0,
+        );
+
+        // Not engaged at start (window launching)
+        let t_grace = t0 + Duration::from_secs(2);
+        assert!(!tracker.tick(false, t_grace));
+        assert!(!tracker.is_counting_down());
+
+        // Focus gained during grace
+        let t_focus = t0 + Duration::from_secs(2);
+        assert!(!tracker.tick(true, t_focus));
+
+        // Lost focus right after
+        let t_lost = t0 + Duration::from_secs(4);
+        assert!(!tracker.tick(false, t_lost));
+        assert!(tracker.is_counting_down());
+
+        // After 9.9s of losing focus -> does not exit yet
+        assert!(!tracker.tick(false, t_lost + Duration::from_millis(9900)));
+
+        // After 10.0s of losing focus -> exits!
+        assert!(tracker.tick(false, t_lost + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn test_focus_loss_tracker_resets_on_refocus() {
+        let t0 = std::time::Instant::now();
+        let mut tracker = FocusLossTracker::with_startup_grace(
+            Duration::from_secs(10),
+            Duration::from_secs(3),
+            t0,
+        );
+
+        // Initially focused
+        assert!(!tracker.tick(true, t0));
+
+        // Lost focus at 1s
+        let t1 = t0 + Duration::from_secs(1);
+        assert!(!tracker.tick(false, t1));
+        assert!(tracker.is_counting_down());
+
+        // 8 seconds pass without focus (total lost 8s)
+        let t8 = t1 + Duration::from_secs(8);
+        assert!(!tracker.tick(false, t8));
+
+        // User clicks back at 8.5s -> focus regained!
+        let t_refocus = t1 + Duration::from_millis(8500);
+        assert!(!tracker.tick(true, t_refocus));
+        assert!(!tracker.is_counting_down());
+
+        // Lost focus again at 9s
+        let t_lost2 = t1 + Duration::from_secs(9);
+        assert!(!tracker.tick(false, t_lost2));
+        assert!(tracker.is_counting_down());
+
+        // Another 8 seconds pass (8s since t_lost2) -> should NOT exit because countdown was reset
+        assert!(!tracker.tick(false, t_lost2 + Duration::from_secs(8)));
+
+        // Full 10s elapsed since t_lost2 -> now it exits!
+        assert!(tracker.tick(false, t_lost2 + Duration::from_secs(10)));
     }
 }

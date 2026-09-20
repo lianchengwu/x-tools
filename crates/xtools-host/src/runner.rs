@@ -1564,6 +1564,12 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
             do_trans();
         }
     });
+    #[cfg(windows)]
+    let _focus_timer = xtools_ui::slint_chrome::setup_focus_loss_timer(
+        ui.as_weak(),
+        Duration::from_secs(10),
+        |u| u.get_ai_pending() || u.get_trans_pending(),
+    );
     // Wayland/KWin: the persistent script applies skipTaskbar/skipPager/onAllDesktops
     // on windowAdded; just make sure it is loaded and restore the captured desktop.
     #[cfg(unix)]
