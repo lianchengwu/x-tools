@@ -33,7 +33,132 @@ export struct AiSegment {
 export struct AiChatMessage {
     role: int, // 0 = user, 1 = assistant
     content: string,
+    reasoning: string,
     segments: [AiSegment],
+}
+
+// AI 思考过程折叠块：标题指示栏 + 可折叠展开的推理内容
+component AiReasoningBlock inherits Rectangle {
+    in property <string> reasoning;
+    in property <bool> is-pending: false;
+    in property <bool> has-content: false;
+    callback copy-reasoning(string);
+
+    // 默认展开状态：处于正在生成中且尚未出现正文时默认展开；已有正文时默认收起（也可随时手动点击展开）
+    property <bool> expanded: !root.has-content;
+
+    border-radius: Theme.radius-control;
+    background: Theme.secondary;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    clip: true;
+
+    VerticalLayout {
+        padding-left: 10px;
+        padding-right: 8px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        spacing: 4px;
+
+        // 头部折叠条
+        Rectangle {
+            height: 22px;
+
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+
+                Text {
+                    text: root.is-pending && !root.has-content ? "⚡" : "💭";
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: root.is-pending && !root.has-content
+                        ? "正在思考中…"
+                        : (root.expanded ? "思考过程（点击收起）" : "思考过程（点击展开）");
+                    font-size: 11px;
+                    color: Theme.muted;
+                    vertical-alignment: center;
+                    font-weight: 500;
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                // 复制按钮（仅展开且有内容时展示）
+                if root.expanded && root.reasoning != "" : Rectangle {
+                    width: 22px;
+                    height: 20px;
+                    border-radius: 4px;
+                    background: copy-touch.has-hover ? Theme.secondary-hover : Colors.transparent;
+
+                    VerticalLayout {
+                        alignment: center;
+                        Path {
+                            width: 11px;
+                            height: 11px;
+                            commands: "M 3.5 2 L 3.5 1 L 9.5 1 L 9.5 7 L 8 7 M 1 3 L 6.5 3 L 6.5 9.5 L 1 9.5 Z";
+                            stroke: copy-touch.has-hover ? Theme.foreground : Theme.muted;
+                            stroke-width: 1.1px;
+                            stroke-line-cap: round;
+                            stroke-line-join: round;
+                        }
+                    }
+
+                    copy-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.copy-reasoning(root.reasoning);
+                        }
+                    }
+                }
+
+                // 展开/收起箭头
+                Text {
+                    text: root.expanded ? "▲" : "▼";
+                    font-size: 9px;
+                    color: Theme.muted;
+                    vertical-alignment: center;
+                }
+            }
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.expanded = !root.expanded;
+                }
+            }
+        }
+
+        // 展开后的思考过程内容
+        if root.expanded : VerticalLayout {
+            padding-top: 4px;
+            padding-bottom: 2px;
+            padding-left: 2px;
+            padding-right: 2px;
+            spacing: 4px;
+
+            Rectangle {
+                height: 1px;
+                background: Theme.border-subtle;
+            }
+
+            ScrollView {
+                height: min(reason-text.preferred-height, 220px);
+                viewport-width: self.visible-width;
+                viewport-height: reason-text.preferred-height;
+
+                reason-text := Text {
+                    text: root.reasoning;
+                    font-size: 12px;
+                    color: Theme.muted;
+                    font-italic: true;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
 }
 
 export struct AiProviderItem {
@@ -418,6 +543,8 @@ export component RunnerWindow inherits Window {
     in-out property <int> ai-session-index: 0;
     // 流式生成中：当前已收到的完整回答文本（宿主后台线程增量回填）
     in-out property <string> ai-stream-text: "";
+    in-out property <string> ai-stream-reasoning: "";
+    callback ai-copy-reasoning(string);
 
     callback ai-send();
     callback ai-clear();
@@ -2057,6 +2184,10 @@ export component RunnerWindow inherits Window {
                     changed observed-stream => {
                         chat-list.viewport-y = Math.min(0px, chat-list.visible-height - chat-list.viewport-height);
                     }
+                    property <string> observed-reasoning: root.ai-stream-reasoning;
+                    changed observed-reasoning => {
+                        chat-list.viewport-y = Math.min(0px, chat-list.visible-height - chat-list.viewport-height);
+                    }
 
                     chat-list := ListView {
                         width: 100%;
@@ -2086,16 +2217,27 @@ export component RunnerWindow inherits Window {
                                         spacing: 8px;
                                         alignment: start;
 
+                                        // 助手消息如果有思考过程，渲染折叠块
+                                        if msg.role == 1 && msg.reasoning != "" : AiReasoningBlock {
+                                            reasoning: msg.reasoning;
+                                            is-pending: root.ai-pending;
+                                            has-content: msg.content != "";
+                                            copy-reasoning(text) => {
+                                                root.ai-copy-reasoning(text);
+                                            }
+                                        }
+
                                         // 无分段（空内容=思考中占位）
                                         if msg.segments.length == 0 : Text {
-                                            text: msg.content == "" ? "正在思考…" : msg.content;
+                                            text: msg.content == ""
+                                                ? (msg.reasoning != "" ? "" : "正在思考…")
+                                                : msg.content;
                                             font-size: Theme.font-size-body;
                                             font-italic: msg.content == "";
                                             color: msg.role == 0 ? Theme.primary-fg
                                                 : (msg.content == "" ? Theme.muted : Theme.foreground);
                                             wrap: word-wrap;
                                         }
-
                                         for seg in msg.segments : VerticalLayout {
                                             spacing: 0px;
 

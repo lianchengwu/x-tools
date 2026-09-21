@@ -1347,6 +1347,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
 
                 u.set_ai_pending(true);
                 u.set_ai_stream_text("".into());
+                u.set_ai_stream_reasoning("".into());
                 // 立即显示「正在思考…」占位气泡
                 if let Some(vm) = model
                     .as_any()
@@ -1355,6 +1356,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
                     vm.push(AiChatMessage {
                         role: 1,
                         content: "".into(),
+                        reasoning: "".into(),
                         segments: slint::ModelRc::default(),
                     });
                 }
@@ -1366,6 +1368,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
                         u.set_ai_pending(false);
                         h(UiEvent::AssistantDone {
                             content: String::new(),
+                            reasoning: None,
                             error: Some("对话历史为空".to_string()),
                             aborted: false,
                         });
@@ -1375,6 +1378,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
                         u.set_ai_pending(false);
                         h(UiEvent::AssistantDone {
                             content: String::new(),
+                            reasoning: None,
                             error: Some(e),
                             aborted: false,
                         });
@@ -1386,11 +1390,13 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
                 let ui_finish = ui_w.clone();
                 let cancel_for_thread = ai_cancel.clone();
                 std::thread::spawn(move || {
-                    let on_delta = move |full: String| {
+                    let on_delta = move |update: crate::ai_runtime::AiStreamUpdate| {
                         let ui_delta = ui_delta.clone();
                         let _ = ui_delta.upgrade_in_event_loop(move |u| {
-                            let text: slint::SharedString = full.into();
+                            let text: slint::SharedString = update.content.into();
+                            let reason: slint::SharedString = update.reasoning.into();
                             u.set_ai_stream_text(text.clone());
+                            u.set_ai_stream_reasoning(reason.clone());
                             let model = u.get_ai_messages();
                             let len = model.row_count();
                             if len > 0 {
@@ -1403,6 +1409,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
                                         AiChatMessage {
                                             role: 1,
                                             content: text.clone(),
+                                            reasoning: reason,
                                             segments: build_chat_segments(&text),
                                         },
                                     );
@@ -1416,19 +1423,27 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = ui_finish.upgrade_in_event_loop(move |u| {
                         u.set_ai_pending(false);
                         u.set_ai_stream_text("".into());
+                        u.set_ai_stream_reasoning("".into());
                         let event = match outcome {
-                            crate::ai_runtime::AiOutcome::Completed(text) => UiEvent::AssistantDone {
-                                content: text,
-                                error: None,
-                                aborted: false,
-                            },
-                            crate::ai_runtime::AiOutcome::Aborted(text) => UiEvent::AssistantDone {
-                                content: text,
-                                error: None,
-                                aborted: true,
-                            },
+                            crate::ai_runtime::AiOutcome::Completed { content, reasoning } => {
+                                UiEvent::AssistantDone {
+                                    content,
+                                    reasoning: if reasoning.is_empty() { None } else { Some(reasoning) },
+                                    error: None,
+                                    aborted: false,
+                                }
+                            }
+                            crate::ai_runtime::AiOutcome::Aborted { content, reasoning } => {
+                                UiEvent::AssistantDone {
+                                    content,
+                                    reasoning: if reasoning.is_empty() { None } else { Some(reasoning) },
+                                    error: None,
+                                    aborted: true,
+                                }
+                            }
                             crate::ai_runtime::AiOutcome::Failed(e) => UiEvent::AssistantDone {
                                 content: String::new(),
+                                reasoning: None,
                                 error: Some(e),
                                 aborted: false,
                             },
@@ -1503,6 +1518,13 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
             ui.on_ai_copy_code(move |code| {
                 copy_to_clipboard(&code);
                 show_toast(ui_w.clone(), "代码已复制", true);
+            });
+        }
+        {
+            let ui_w = ui.as_weak();
+            ui.on_ai_copy_reasoning(move |text| {
+                copy_to_clipboard(&text);
+                show_toast(ui_w.clone(), "思考过程已复制", true);
             });
         }
     }
@@ -2171,6 +2193,7 @@ fn sync_ai_view(ui: &RunnerWindow, root: &UiNode) {
                 ChatRole::Assistant => 1,
             },
             content: m.content.clone().into(),
+            reasoning: m.reasoning.clone().into(),
             segments: build_chat_segments(&m.content),
         })
         .collect();
@@ -2178,9 +2201,11 @@ fn sync_ai_view(ui: &RunnerWindow, root: &UiNode) {
     let mut items = items;
     if ui.get_ai_pending() {
         let stream_text = ui.get_ai_stream_text().to_string();
+        let stream_reasoning = ui.get_ai_stream_reasoning().to_string();
         items.push(AiChatMessage {
             role: 1,
             content: stream_text.clone().into(),
+            reasoning: stream_reasoning.into(),
             segments: build_chat_segments(&stream_text),
         });
     }

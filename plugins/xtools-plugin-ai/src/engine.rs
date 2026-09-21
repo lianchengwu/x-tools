@@ -386,18 +386,12 @@ mod tests {
             chat_completion(&config, &empty).unwrap_err(),
             "请输入要发送的问题"
         );
-        let no_user = [ChatMessage {
-            role: ChatRole::Assistant,
-            content: "你好".to_string(),
-        }];
+        let no_user = [ChatMessage::new(ChatRole::Assistant, "你好")];
         assert_eq!(
             chat_completion(&config, &no_user).unwrap_err(),
             "请输入要发送的问题"
         );
-        let user_only = [ChatMessage {
-            role: ChatRole::User,
-            content: "你好".to_string(),
-        }];
+        let user_only = [ChatMessage::new(ChatRole::User, "你好")];
         assert!(chat_completion(&config, &user_only).unwrap_err().contains("托盘"));
 
         // 服务商存在但信息不全
@@ -481,18 +475,9 @@ mod tests {
         config.normalize();
         config.select_by_index(0);
         let history = [
-            ChatMessage {
-                role: ChatRole::User,
-                content: "你好".to_string(),
-            },
-            ChatMessage {
-                role: ChatRole::Assistant,
-                content: "你好！".to_string(),
-            },
-            ChatMessage {
-                role: ChatRole::User,
-                content: "继续".to_string(),
-            },
+            ChatMessage::new(ChatRole::User, "你好"),
+            ChatMessage::new(ChatRole::Assistant, "你好！"),
+            ChatMessage::new(ChatRole::User, "继续"),
         ];
         let body = ChatRequest {
             model: config.selected_model.trim(),

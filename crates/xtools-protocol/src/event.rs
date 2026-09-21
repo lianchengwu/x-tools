@@ -24,6 +24,8 @@ pub enum UiEvent {
         #[serde(default)]
         content: String,
         #[serde(default)]
+        reasoning: Option<String>,
+        #[serde(default)]
         error: Option<String>,
         #[serde(default)]
         aborted: bool,

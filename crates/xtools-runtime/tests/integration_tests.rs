@@ -468,6 +468,7 @@ fn test_ai_send_phase_a_and_assistant_done_success() {
     // 宿主回填：追加助手回答
     let resp = instance.handle_event(&UiEvent::AssistantDone {
         content: "这是回答".to_string(),
+        reasoning: None,
         error: None,
         aborted: false,
     }).unwrap();
@@ -490,6 +491,43 @@ fn test_ai_send_phase_a_and_assistant_done_success() {
 }
 
 #[test]
+fn test_ai_assistant_done_with_reasoning() {
+    let Some((mut instance, temp_dir)) = load_ai_instance("test_ai_assistant_done_with_reasoning") else {
+        return;
+    };
+    seed_ai_config(&temp_dir, "m1");
+    instance.init().expect("init ai plugin");
+
+    instance.handle_event(&UiEvent::InputChanged {
+        id: "input_draft".to_string(),
+        value: "证明勾股定理".to_string(),
+    }).unwrap();
+    instance.handle_event(&UiEvent::Click { id: "btn_send".to_string() }).unwrap();
+
+    let resp = instance.handle_event(&UiEvent::AssistantDone {
+        content: "证明完成：a^2 + b^2 = c^2".to_string(),
+        reasoning: Some("构造大正方形与四个直角三角形...".to_string()),
+        error: None,
+        aborted: false,
+    }).unwrap();
+    let UiResponse::UpdateView(view) = resp else {
+        panic!("expected UpdateView after done");
+    };
+    let mut msgs = Vec::new();
+    collect_chat_messages(&view.root, &mut msgs);
+    assert_eq!(msgs.len(), 2);
+    assert_eq!(msgs[1].1, "证明完成：a^2 + b^2 = c^2");
+
+    let sessions = xtools_runtime::storage::read_from(&temp_dir, "xtools.ai", "sessions.json")
+        .expect("sessions should be persisted");
+    let sessions = String::from_utf8(sessions).unwrap();
+    assert!(sessions.contains("构造大正方形与四个直角三角形"), "{sessions}");
+    assert!(sessions.contains("证明完成"), "{sessions}");
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
 fn test_ai_assistant_done_error_rolls_back() {
     let Some((mut instance, temp_dir)) = load_ai_instance("test_ai_assistant_done_error_rolls_back") else {
         return;
@@ -506,6 +544,7 @@ fn test_ai_assistant_done_error_rolls_back() {
     // 失败回填：用户消息回滚到草稿，展示错误
     let resp = instance.handle_event(&UiEvent::AssistantDone {
         content: String::new(),
+        reasoning: None,
         error: Some("AI 接口返回 HTTP 401: Invalid API key".to_string()),
         aborted: false,
     }).unwrap();
@@ -542,6 +581,7 @@ fn test_ai_assistant_done_stale_is_ignored() {
     instance.handle_event(&UiEvent::Click { id: "btn_clear".to_string() }).unwrap();
     instance.handle_event(&UiEvent::AssistantDone {
         content: "迟到的回答".to_string(),
+        reasoning: None,
         error: None,
         aborted: false,
     }).unwrap();
@@ -569,6 +609,7 @@ fn test_ai_assistant_done_abort_keeps_partial() {
     instance.handle_event(&UiEvent::Click { id: "btn_send".to_string() }).unwrap();
     instance.handle_event(&UiEvent::AssistantDone {
         content: "春天来了".to_string(),
+        reasoning: None,
         error: None,
         aborted: true,
     }).unwrap();

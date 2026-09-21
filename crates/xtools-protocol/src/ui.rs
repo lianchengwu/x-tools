@@ -297,6 +297,30 @@ pub enum ChatRole {
 pub struct ChatMessage {
     pub role: ChatRole,
     pub content: String,
+    #[serde(default)]
+    pub reasoning: String,
+}
+
+impl ChatMessage {
+    pub fn new(role: ChatRole, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            reasoning: String::new(),
+        }
+    }
+
+    pub fn with_reasoning(
+        role: ChatRole,
+        content: impl Into<String>,
+        reasoning: impl Into<String>,
+    ) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            reasoning: reasoning.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

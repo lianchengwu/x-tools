@@ -314,10 +314,7 @@ impl XPlugin for AiPlugin {
                     }
 
                     let session = self.active_mut();
-                    session.messages.push(ChatMessage {
-                        role: ChatRole::User,
-                        content: text,
-                    });
+                    session.messages.push(ChatMessage::new(ChatRole::User, text));
                     Self::trim_history(&mut session.messages);
                     Self::ensure_session_title(session);
                     self.draft.clear();
@@ -431,19 +428,20 @@ impl XPlugin for AiPlugin {
                 Ok(UiResponse::UpdateView(self.render()))
             }
             // 宿主后台请求完成：追加回答 / 失败回滚 / 中止保留部分内容
-            UiEvent::AssistantDone { content, error, aborted } => {
+            UiEvent::AssistantDone { content, reasoning, error, aborted } => {
                 self.pending = false;
                 // 过期保护：当前会话必须以用户消息结尾（请求期间切换/清空会话等场景直接丢弃）
                 if self.active().messages.last().map(|m| m.role) != Some(ChatRole::User) {
                     return Ok(UiResponse::UpdateView(self.render()));
                 }
                 let text = content.trim().to_string();
+                let reason = reasoning.unwrap_or_default().trim().to_string();
                 match error {
                     Some(e) => {
                         self.rollback_last_user_message();
                         self.error = Some(format!("{e}（已保留输入，可再次点击「发送」重试）"));
                     }
-                    None if text.is_empty() => {
+                    None if text.is_empty() && reason.is_empty() => {
                         self.rollback_last_user_message();
                         self.error = Some(if aborted {
                             "已停止生成。".to_string()
@@ -453,10 +451,11 @@ impl XPlugin for AiPlugin {
                     }
                     None => {
                         let session = self.active_mut();
-                        session.messages.push(ChatMessage {
-                            role: ChatRole::Assistant,
-                            content: text,
-                        });
+                        session.messages.push(ChatMessage::with_reasoning(
+                            ChatRole::Assistant,
+                            text,
+                            reason,
+                        ));
                         self.error = None;
                         self.status = if aborted {
                             "已停止生成，已保留部分回答".to_string()
@@ -498,10 +497,7 @@ mod tests {
             sessions: vec![ChatSession {
                 id: "s1".into(),
                 title: "会话一".into(),
-                messages: vec![ChatMessage {
-                    role: ChatRole::User,
-                    content: "你好".to_string(),
-                }],
+                messages: vec![ChatMessage::new(ChatRole::User, "你好")],
             }],
             active_id: "s1".into(),
         };
@@ -514,10 +510,10 @@ mod tests {
     #[test]
     fn test_trim_history() {
         let mut messages: Vec<ChatMessage> = (0..MAX_HISTORY + 10)
-            .map(|i| ChatMessage {
-                role: if i % 2 == 0 { ChatRole::User } else { ChatRole::Assistant },
-                content: i.to_string(),
-            })
+            .map(|i| ChatMessage::new(
+                if i % 2 == 0 { ChatRole::User } else { ChatRole::Assistant },
+                i.to_string(),
+            ))
             .collect();
         AiPlugin::trim_history(&mut messages);
         assert_eq!(messages.len(), MAX_HISTORY);
@@ -601,6 +597,7 @@ mod tests {
         plugin
             .handle_event(UiEvent::AssistantDone {
                 content: "答案".into(),
+                reasoning: None,
                 error: None,
                 aborted: false,
             })
@@ -613,6 +610,25 @@ mod tests {
     }
 
     #[test]
+    fn test_assistant_done_with_reasoning_appends_and_persists() {
+        let mut plugin = configured_plugin();
+        plugin.draft = "请推导公式".into();
+        plugin.handle_event(UiEvent::Click { id: "btn_send".into() }).unwrap();
+        plugin
+            .handle_event(UiEvent::AssistantDone {
+                content: "公式为 E=mc^2".into(),
+                reasoning: Some("首先依据相对论基本假设进行推导...".into()),
+                error: None,
+                aborted: false,
+            })
+            .unwrap();
+        assert_eq!(plugin.active().messages.len(), 2);
+        let assistant_msg = &plugin.active().messages[1];
+        assert_eq!(assistant_msg.content, "公式为 E=mc^2");
+        assert_eq!(assistant_msg.reasoning, "首先依据相对论基本假设进行推导...");
+    }
+
+    #[test]
     fn test_assistant_done_error_rolls_back_to_draft() {
         let mut plugin = configured_plugin();
         plugin.draft = "你好".into();
@@ -620,6 +636,7 @@ mod tests {
         plugin
             .handle_event(UiEvent::AssistantDone {
                 content: String::new(),
+                reasoning: None,
                 error: Some("AI 接口返回 HTTP 401: bad key".into()),
                 aborted: false,
             })
@@ -638,6 +655,7 @@ mod tests {
         plugin
             .handle_event(UiEvent::AssistantDone {
                 content: "春天来了".into(),
+                reasoning: None,
                 error: None,
                 aborted: true,
             })
@@ -657,6 +675,7 @@ mod tests {
         plugin
             .handle_event(UiEvent::AssistantDone {
                 content: "迟到的回答".into(),
+                reasoning: None,
                 error: None,
                 aborted: false,
             })
@@ -682,6 +701,7 @@ mod tests {
         plugin
             .handle_event(UiEvent::AssistantDone {
                 content: "好的".into(),
+                reasoning: None,
                 error: None,
                 aborted: false,
             })
@@ -781,14 +801,8 @@ mod tests {
         assert!(matches!(resp, UiResponse::ShowToast(t) if t.level == ToastLevel::Warning));
 
         plugin.active_mut().messages = vec![
-            ChatMessage {
-                role: ChatRole::User,
-                content: "你好".to_string(),
-            },
-            ChatMessage {
-                role: ChatRole::Assistant,
-                content: "你好！有什么可以帮你？".to_string(),
-            },
+            ChatMessage::new(ChatRole::User, "你好"),
+            ChatMessage::new(ChatRole::Assistant, "你好！有什么可以帮你？"),
         ];
 
         // 复制最新一条回答（原生测试下 clipboard_write 为空实现，仅验证走通）

@@ -26,11 +26,18 @@ pub struct AiChatParams {
     pub messages: Vec<(String, String)>,
 }
 
+/// 流式接收过程中的增量状态（正文与思考过程）
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AiStreamUpdate {
+    pub content: String,
+    pub reasoning: String,
+}
+
 /// 请求结果：Completed = 完整回答；Aborted = 用户停止（保留部分内容）；Failed = 失败
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AiOutcome {
-    Completed(String),
-    Aborted(String),
+    Completed { content: String, reasoning: String },
+    Aborted { content: String, reasoning: String },
     Failed(String),
 }
 
@@ -124,11 +131,11 @@ fn read_active_session_messages(root: &std::path::Path, plugin_id: &str) -> Vec<
 }
 
 /// 执行流式对话请求（阻塞，应在后台线程调用）。
-/// 每收到一个增量就以「当前完整文本」回调 on_delta；结束时返回结果。
+/// 每收到一个增量就以「当前完整文本与思考过程」回调 on_delta；结束时返回结果。
 pub fn stream_chat(
     params: &AiChatParams,
     cancel: &AtomicBool,
-    on_delta: &dyn Fn(String),
+    on_delta: &dyn Fn(AiStreamUpdate),
 ) -> AiOutcome {
     let url = chat_url(&params.base_url);
     let body = serde_json::json!({
@@ -181,10 +188,13 @@ pub fn stream_chat(
     } else {
         // 服务商不支持流式：整体读取普通 JSON 响应
         let body_text = response.body_mut().read_to_string().unwrap_or_default();
-        match parse_chat_content(&body_text) {
-            Some(content) => {
-                on_delta(content.clone());
-                AiOutcome::Completed(content)
+        match parse_chat_response(&body_text) {
+            Some((content, reasoning)) => {
+                on_delta(AiStreamUpdate {
+                    content: content.clone(),
+                    reasoning: reasoning.clone(),
+                });
+                AiOutcome::Completed { content, reasoning }
             }
             None => AiOutcome::Failed(format!(
                 "AI 接口返回 HTTP {status}: {}",
@@ -194,16 +204,66 @@ pub fn stream_chat(
     }
 }
 
+/// 解析并分离回答内容与思考过程：
+/// 1. 优先提取 OpenAI / DeepSeek 协议级的 `reasoning_content`（或 `reasoning`）
+/// 2. 同时支持并剥离内容中的 `<think>...</think>` 标签（适配 Ollama / 本地模型 / QwQ 等）
+/// 3. 支持流式过程中未闭合的 `<think>` 标签实时提取
+pub fn parse_reasoning_and_content(
+    raw_content: &str,
+    raw_reasoning: &str,
+) -> (String, String) {
+    let mut reasoning = raw_reasoning.trim().to_string();
+    let mut content = raw_content.to_string();
+
+    const THINK_START: &str = "<think>";
+    const THINK_END: &str = "</think>";
+
+    if let Some(start_idx) = content.find(THINK_START) {
+        let after_start = start_idx + THINK_START.len();
+        if let Some(end_rel) = content[after_start..].find(THINK_END) {
+            let end_idx = after_start + end_rel;
+            let think_text = content[after_start..end_idx].trim();
+            if !think_text.is_empty() {
+                if reasoning.is_empty() {
+                    reasoning = think_text.to_string();
+                } else {
+                    reasoning.push('\n');
+                    reasoning.push_str(think_text);
+                }
+            }
+            let before = &content[..start_idx];
+            let after = &content[end_idx + THINK_END.len()..];
+            content = format!("{}{}", before, after).trim_start().to_string();
+        } else {
+            // 尚未闭合（仍在流式思考中）
+            let think_text = content[after_start..].trim();
+            if !think_text.is_empty() {
+                if reasoning.is_empty() {
+                    reasoning = think_text.to_string();
+                } else {
+                    reasoning.push('\n');
+                    reasoning.push_str(think_text);
+                }
+            }
+            content = content[..start_idx].trim_start().to_string();
+        }
+    }
+
+    (content, reasoning)
+}
+
 fn stream_sse(
     mut response: ureq::http::Response<ureq::Body>,
     cancel: &AtomicBool,
-    on_delta: &dyn Fn(String),
+    on_delta: &dyn Fn(AiStreamUpdate),
 ) -> AiOutcome {
-    let mut acc = String::new();
+    let mut raw_content = String::new();
+    let mut raw_reasoning = String::new();
     let reader = BufReader::new(response.body_mut().as_reader());
     for line in reader.lines() {
         if cancel.load(Ordering::Relaxed) {
-            return AiOutcome::Aborted(acc);
+            let (content, reasoning) = parse_reasoning_and_content(&raw_content, &raw_reasoning);
+            return AiOutcome::Aborted { content, reasoning };
         }
         let line = match line {
             Ok(l) => l,
@@ -222,27 +282,55 @@ fn stream_sse(
         let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
             continue;
         };
-        if let Some(delta) = value["choices"][0]["delta"]["content"].as_str() {
-            acc.push_str(delta);
-            on_delta(acc.clone());
+
+        let delta = &value["choices"][0]["delta"];
+        let mut changed = false;
+
+        // 1. 协议级 reasoning_content / reasoning 字段
+        if let Some(r) = delta["reasoning_content"]
+            .as_str()
+            .or_else(|| delta["reasoning"].as_str())
+        {
+            raw_reasoning.push_str(r);
+            changed = true;
+        }
+
+        // 2. 正文 content 字段
+        if let Some(c) = delta["content"].as_str() {
+            raw_content.push_str(c);
+            changed = true;
+        }
+
+        if changed {
+            let (content, reasoning) = parse_reasoning_and_content(&raw_content, &raw_reasoning);
+            on_delta(AiStreamUpdate { content, reasoning });
         }
     }
-    if acc.is_empty() {
+
+    let (content, reasoning) = parse_reasoning_and_content(&raw_content, &raw_reasoning);
+    if content.is_empty() && reasoning.is_empty() {
         AiOutcome::Failed("AI 未返回回答内容".to_string())
     } else {
-        AiOutcome::Completed(acc)
+        AiOutcome::Completed { content, reasoning }
     }
 }
 
-/// 从 OpenAI 兼容的非流式响应中取回答内容
-fn parse_chat_content(body_text: &str) -> Option<String> {
+/// 从 OpenAI 兼容的非流式响应中取回答内容与思考过程
+fn parse_chat_response(body_text: &str) -> Option<(String, String)> {
     let value: serde_json::Value = serde_json::from_str(body_text).ok()?;
-    value["choices"][0]["message"]["content"]
+    let msg = &value["choices"][0]["message"];
+    let raw_content = msg["content"].as_str().unwrap_or("");
+    let raw_reasoning = msg["reasoning_content"]
         .as_str()
-        .map(str::to_string)
-        .filter(|s| !s.trim().is_empty())
+        .or_else(|| msg["reasoning"].as_str())
+        .unwrap_or("");
+    let (content, reasoning) = parse_reasoning_and_content(raw_content, raw_reasoning);
+    if content.is_empty() && reasoning.is_empty() {
+        None
+    } else {
+        Some((content, reasoning))
+    }
 }
-
 /// 优先透出接口 JSON 错误信息，否则截取响应体片段（超时、鉴权失败等）
 fn error_detail(body_text: &str) -> String {
     serde_json::from_str::<serde_json::Value>(body_text)
@@ -404,8 +492,8 @@ mod tests {
         let deltas = Arc::new(std::sync::Mutex::new(Vec::new()));
         let deltas_cb = deltas.clone();
         let cancel = AtomicBool::new(false);
-        let outcome = stream_chat(&params(port), &cancel, &move |full: String| {
-            deltas_cb.lock().unwrap().push(full);
+        let outcome = stream_chat(&params(port), &cancel, &move |update: AiStreamUpdate| {
+            deltas_cb.lock().unwrap().push(update.content);
         });
 
         let raw = server.join().unwrap();
@@ -429,7 +517,10 @@ mod tests {
         assert_eq!(d[1], "你好");
 
         match outcome {
-            AiOutcome::Completed(text) => assert_eq!(text, "你好"),
+            AiOutcome::Completed { content, reasoning } => {
+                assert_eq!(content, "你好");
+                assert_eq!(reasoning, "");
+            }
             other => panic!("expected Completed, got {other:?}"),
         }
     }
@@ -453,13 +544,13 @@ mod tests {
         let outcome = stream_chat(
             &params(port),
             &AtomicBool::new(false),
-            &move |_full: String| {
+            &move |_update: AiStreamUpdate| {
                 *seen_cb.lock().unwrap() += 1;
             },
         );
         let _ = server.join();
         assert_eq!(*seen.lock().unwrap(), 1);
-        assert!(matches!(outcome, AiOutcome::Completed(ref t) if t == "整体回答"), "{outcome:?}");
+        assert!(matches!(outcome, AiOutcome::Completed { ref content, .. } if content == "整体回答"), "{outcome:?}");
     }
 
     #[test]
@@ -501,16 +592,74 @@ mod tests {
         let cancel_cb = cancel.clone();
         let first = Arc::new(std::sync::Mutex::new(true));
         let first_cb = first.clone();
-        let outcome = stream_chat(&params(port), &cancel, &move |full: String| {
+        let outcome = stream_chat(&params(port), &cancel, &move |update: AiStreamUpdate| {
             // 收到第一个增量后立即请求取消
             if *first_cb.lock().unwrap() {
                 *first_cb.lock().unwrap() = false;
                 cancel_cb.store(true, Ordering::Relaxed);
             }
-            let _ = full;
+            let _ = update;
         });
         let _ = server.join();
-        assert!(matches!(outcome, AiOutcome::Aborted(ref t) if t == "部分"), "{outcome:?}");
+        assert!(matches!(outcome, AiOutcome::Aborted { ref content, .. } if content == "部分"), "{outcome:?}");
         let _ = cancel;
+    }
+
+    #[test]
+    fn test_parse_reasoning_and_content_scenarios() {
+        // 1. 无思考过程，纯文本
+        let (content, reason) = parse_reasoning_and_content("正常回答", "");
+        assert_eq!(content, "正常回答");
+        assert_eq!(reason, "");
+
+        // 2. 协议级 reasoning_content 传入
+        let (content, reason) = parse_reasoning_and_content("回答", "逐步推导...");
+        assert_eq!(content, "回答");
+        assert_eq!(reason, "逐步推导...");
+
+        // 3. 正文中闭合的 <think>...</think> 标签剥离
+        let raw = "<think>\n先分析问题\n再组织语言\n</think>\n最终答案";
+        let (content, reason) = parse_reasoning_and_content(raw, "");
+        assert_eq!(content, "最终答案");
+        assert_eq!(reason, "先分析问题\n再组织语言");
+
+        // 4. 流式传输中未闭合的 <think> 标签提取
+        let partial = "<think>\n正在深度思考第 1 步";
+        let (content, reason) = parse_reasoning_and_content(partial, "");
+        assert_eq!(content, "");
+        assert_eq!(reason, "正在深度思考第 1 步");
+    }
+
+    #[test]
+    fn test_stream_chat_sse_reasoning_and_content() {
+        let (port, server) = spawn_stub(
+            sse_response(vec![
+                r#"data: {"choices":[{"delta":{"reasoning_content":"思考中"}}]}"#.to_string(),
+                r#"data: {"choices":[{"delta":{"content":"答案"}}]}"#.to_string(),
+                "data: [DONE]".to_string(),
+            ]),
+        );
+
+        let updates = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let updates_cb = updates.clone();
+        let cancel = AtomicBool::new(false);
+        let outcome = stream_chat(&params(port), &cancel, &move |update: AiStreamUpdate| {
+            updates_cb.lock().push(update);
+        });
+
+        let _ = server.join();
+        let u = updates.lock();
+        assert_eq!(u[0].reasoning, "思考中");
+        assert_eq!(u[0].content, "");
+        assert_eq!(u[1].reasoning, "思考中");
+        assert_eq!(u[1].content, "答案");
+
+        match outcome {
+            AiOutcome::Completed { content, reasoning } => {
+                assert_eq!(content, "答案");
+                assert_eq!(reasoning, "思考中");
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
     }
 }
