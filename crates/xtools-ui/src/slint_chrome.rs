@@ -430,6 +430,10 @@ where
     C: slint::ComponentHandle + 'static,
     B: FnMut(&C) -> bool + 'static,
 {
+    if std::env::var_os("XTOOLS_NO_AUTOCLOSE").is_some() {
+        return slint::Timer::default();
+    }
+
     use std::cell::RefCell;
     use std::rc::Rc;
     use i_slint_backend_winit::WinitWindowAccessor;
@@ -479,7 +483,117 @@ where
     timer
 }
 
-#[cfg(not(all(windows, feature = "slint-chrome")))]
+/// Start a timer that automatically exits the process when the window has lost
+/// focus or the mouse has left continuously for `timeout`.
+///
+/// If the window regains focus, the mouse is hovered over the window, or `is_busy()` returns true,
+/// the countdown is reset.
+#[cfg(all(unix, feature = "slint-chrome"))]
+pub fn setup_focus_loss_timer<C, B>(
+    window: slint::Weak<C>,
+    timeout: Duration,
+    mut is_busy: B,
+) -> slint::Timer
+where
+    C: slint::ComponentHandle + 'static,
+    B: FnMut(&C) -> bool + 'static,
+{
+    if std::env::var_os("XTOOLS_NO_AUTOCLOSE").is_some() {
+        return slint::Timer::default();
+    }
+
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+    use i_slint_backend_winit::{EventResult, WinitWindowAccessor};
+
+    let timer = slint::Timer::default();
+    let tracker = Rc::new(RefCell::new(FocusLossTracker::with_startup_grace(
+        timeout,
+        Duration::from_secs(3),
+        std::time::Instant::now(),
+    )));
+
+    let mouse_inside = Rc::new(Cell::new(false));
+    let has_focus = Rc::new(Cell::new(false));
+    let last_input_at = Rc::new(Cell::new(std::time::Instant::now()));
+
+    // Attach event filter to track pointer enter/leave and focus events from winit (Wayland / X11)
+    if let Some(ui) = window.upgrade() {
+        let mi = mouse_inside.clone();
+        let hf = has_focus.clone();
+        let lia = last_input_at.clone();
+
+        ui.window().on_winit_window_event(move |_window, event| {
+            match event {
+                i_slint_backend_winit::winit::event::WindowEvent::CursorEntered { .. } => {
+                    mi.set(true);
+                }
+                i_slint_backend_winit::winit::event::WindowEvent::CursorMoved { .. } => {
+                    mi.set(true);
+                }
+                i_slint_backend_winit::winit::event::WindowEvent::CursorLeft { .. } => {
+                    mi.set(false);
+                }
+                i_slint_backend_winit::winit::event::WindowEvent::Focused(focused) => {
+                    hf.set(*focused);
+                    if *focused {
+                        lia.set(std::time::Instant::now());
+                    }
+                }
+                i_slint_backend_winit::winit::event::WindowEvent::KeyboardInput { .. } => {
+                    lia.set(std::time::Instant::now());
+                }
+                i_slint_backend_winit::winit::event::WindowEvent::MouseInput { .. } => {
+                    mi.set(true);
+                    lia.set(std::time::Instant::now());
+                }
+                _ => {}
+            }
+            EventResult::Propagate
+        });
+    }
+
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_millis(200),
+        move || {
+            let Some(ui) = window.upgrade() else {
+                return;
+            };
+
+            // If the application is busy (e.g. AI generating, translation in progress), keep alive
+            if is_busy(&ui) {
+                tracker.borrow_mut().tick(true, std::time::Instant::now());
+                return;
+            }
+
+            // A window is considered engaged if:
+            // 1. The cursor is currently inside the window (Wayland pointer enter/leave).
+            // 2. OR the window has focus and user interacted recently (within 5 seconds).
+            let is_inside = mouse_inside.get();
+            let recent_input =
+                has_focus.get() && last_input_at.get().elapsed() < Duration::from_secs(5);
+            let engaged = is_inside || recent_input;
+
+            let should_exit = tracker.borrow_mut().tick(engaged, std::time::Instant::now());
+            if should_exit {
+                log::info!(
+                    "xtools: window lost focus / mouse left for {:?}, auto-exiting",
+                    timeout
+                );
+                let _ = ui.hide();
+                std::process::exit(0);
+            }
+        },
+    );
+
+    timer
+}
+
+#[cfg(not(any(
+    all(windows, feature = "slint-chrome"),
+    all(unix, feature = "slint-chrome")
+)))]
 pub fn setup_focus_loss_timer<C, B>(
     _window: slint::Weak<C>,
     _timeout: Duration,
@@ -490,6 +604,19 @@ where
     B: FnMut(&C) -> bool + 'static,
 {
     slint::Timer::default()
+}
+
+/// Alias for `setup_focus_loss_timer`, making the mouse leave detection explicit.
+pub fn setup_mouse_leave_timer<C, B>(
+    window: slint::Weak<C>,
+    timeout: Duration,
+    is_busy: B,
+) -> slint::Timer
+where
+    C: slint::ComponentHandle + 'static,
+    B: FnMut(&C) -> bool + 'static,
+{
+    setup_focus_loss_timer(window, timeout, is_busy)
 }
 
 pub fn setup_focus_loss_timer_simple<C>(
@@ -543,6 +670,60 @@ mod tests {
         assert!(exp2);
         let restored2 = resize.toggle_expand(win.window(), 100, 100, 200, 200);
         assert!(!restored2);
+    }
+
+    #[test]
+    fn test_winit_window_event_filter() {
+        use i_slint_backend_winit::{EventResult, WinitWindowAccessor};
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        slint::slint! {
+            export component TestFilterWindow inherits Window {
+                width: 100px;
+                height: 100px;
+            }
+        }
+        let Ok(Ok(win)) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(TestFilterWindow::new))
+        else {
+            return;
+        };
+        let mouse_inside = Arc::new(AtomicBool::new(false));
+        let mi = mouse_inside.clone();
+        win.window().on_winit_window_event(move |_window, event| {
+            match event {
+                i_slint_backend_winit::winit::event::WindowEvent::CursorEntered { .. } => {
+                    mi.store(true, Ordering::SeqCst);
+                }
+                i_slint_backend_winit::winit::event::WindowEvent::CursorLeft { .. } => {
+                    mi.store(false, Ordering::SeqCst);
+                }
+                _ => {}
+            }
+            EventResult::Propagate
+        });
+    }
+
+    #[test]
+    fn test_setup_mouse_leave_timer() {
+        slint::slint! {
+            export component TestLeaveWindow inherits Window {
+                width: 100px;
+                height: 100px;
+            }
+        }
+        let Ok(Ok(win)) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(TestLeaveWindow::new))
+        else {
+            return;
+        };
+        let _timer = setup_mouse_leave_timer(win.as_weak(), Duration::from_secs(10), |_| false);
+        // Also verify XTOOLS_NO_AUTOCLOSE
+        unsafe {
+            std::env::set_var("XTOOLS_NO_AUTOCLOSE", "1");
+        }
+        let _timer_disabled = setup_focus_loss_timer(win.as_weak(), Duration::from_secs(10), |_| false);
+        unsafe {
+            std::env::remove_var("XTOOLS_NO_AUTOCLOSE");
+        }
     }
 
     #[test]

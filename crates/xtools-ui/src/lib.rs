@@ -11,8 +11,8 @@ pub mod slint_chrome;
 #[cfg(feature = "slint-chrome")]
 pub use slint_chrome::{
     FocusLossTracker, ResizeEdge, WindowDragState, WindowResizeState, copy_to_clipboard,
-    setup_focus_loss_timer, setup_focus_loss_timer_simple, setup_raise_timer,
-    setup_raise_timer_with_callback,
+    setup_focus_loss_timer, setup_focus_loss_timer_simple, setup_mouse_leave_timer,
+    setup_raise_timer, setup_raise_timer_with_callback,
 };
 
 pub use boot::{
