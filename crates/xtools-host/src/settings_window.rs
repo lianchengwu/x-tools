@@ -10,7 +10,7 @@ use std::time::Duration;
 use slint::ComponentHandle;
 use xtools_ui::boot::{capture_target_desktop, init_input_method_env, take_activation_token};
 use xtools_ui::instance::{claim_instance, raise_instance};
-use xtools_ui::slint_chrome::{WindowDragState, setup_raise_timer};
+use xtools_ui::slint_chrome::{WindowDragState, setup_raise_timer, setup_taskbar_exclusion};
 
 use crate::ai_config::{
     load_ai_config, new_provider_id, save_ai_config, save_baidu_config, AiConfigFile,
@@ -444,6 +444,7 @@ pub fn run_settings(auto_check_update: bool) -> Result<(), Box<dyn std::error::E
     }
 
     let _raise_timer = setup_raise_timer(lock, ui.as_weak());
+    setup_taskbar_exclusion(ui.as_weak());
 
     ui.run()?;
     Ok(())

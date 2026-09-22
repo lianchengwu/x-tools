@@ -14,7 +14,7 @@ use xtools_ui::boot::{capture_target_desktop, init_input_method_env, take_activa
 use xtools_ui::instance::{claim_instance, raise_instance};
 use xtools_ui::slint_chrome::{
     ResizeEdge, WindowDragState, WindowResizeState, copy_to_clipboard,
-    setup_raise_timer_with_callback,
+    setup_raise_timer_with_callback, setup_taskbar_exclusion,
 };
 
 slint::include_modules!();
@@ -1595,6 +1595,7 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
     // on windowAdded; just make sure it is loaded and restore the captured desktop.
     #[cfg(unix)]
     xtools_ui::kwin::pin_self(xtools_ui::boot::target_desktop().as_deref());
+    setup_taskbar_exclusion(ui.as_weak());
 
     ui.run()?;
     Ok(())

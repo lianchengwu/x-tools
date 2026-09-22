@@ -290,6 +290,7 @@ where
                                                 SetForegroundWindow(hwnd);
                                             }
                                             SetFocus(hwnd);
+                                            hide_hwnd_from_taskbar(hwnd);
                                         }
                                     }
                                 }
@@ -414,6 +415,184 @@ pub fn is_window_engaged(hwnd: Option<windows_sys::Win32::Foundation::HWND>) -> 
 
     false
 }
+/// Applies Windows taskbar exclusion to a native window handle (HWND).
+/// Sets `WS_EX_TOOLWINDOW` and clears `WS_EX_APPWINDOW` in the extended window style,
+/// updates the window frame, and deletes the taskbar tab via `ITaskbarList::DeleteTab`.
+#[cfg(all(windows, feature = "slint-chrome"))]
+pub fn hide_hwnd_from_taskbar(hwnd: windows_sys::Win32::Foundation::HWND) {
+    if hwnd.is_null() {
+        return;
+    }
+
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE,
+        SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE,
+        WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    };
+
+    unsafe {
+        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        let new_ex_style = (ex_style & !WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW;
+        if new_ex_style != ex_style {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_ex_style as isize);
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE,
+            );
+        }
+    }
+
+    remove_from_taskbar_list(hwnd);
+}
+
+#[cfg(all(windows, feature = "slint-chrome"))]
+fn remove_from_taskbar_list(hwnd: windows_sys::Win32::Foundation::HWND) {
+    use windows_sys::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+
+    #[repr(C)]
+    struct ITaskbarList {
+        lp_vtbl: *const ITaskbarListVtbl,
+    }
+
+    #[allow(non_snake_case)]
+    #[repr(C)]
+    struct ITaskbarListVtbl {
+        pub QueryInterface: unsafe extern "system" fn(
+            this: *mut core::ffi::c_void,
+            riid: *const windows_sys::core::GUID,
+            ppv: *mut *mut core::ffi::c_void,
+        ) -> windows_sys::core::HRESULT,
+        pub AddRef: unsafe extern "system" fn(this: *mut core::ffi::c_void) -> u32,
+        pub Release: unsafe extern "system" fn(this: *mut core::ffi::c_void) -> u32,
+        pub HrInit: unsafe extern "system" fn(this: *mut core::ffi::c_void) -> windows_sys::core::HRESULT,
+        pub AddTab: unsafe extern "system" fn(
+            this: *mut core::ffi::c_void,
+            hwnd: windows_sys::Win32::Foundation::HWND,
+        ) -> windows_sys::core::HRESULT,
+        pub DeleteTab: unsafe extern "system" fn(
+            this: *mut core::ffi::c_void,
+            hwnd: windows_sys::Win32::Foundation::HWND,
+        ) -> windows_sys::core::HRESULT,
+        pub ActivateTab: unsafe extern "system" fn(
+            this: *mut core::ffi::c_void,
+            hwnd: windows_sys::Win32::Foundation::HWND,
+        ) -> windows_sys::core::HRESULT,
+        pub SetActiveAlt: unsafe extern "system" fn(
+            this: *mut core::ffi::c_void,
+            hwnd: windows_sys::Win32::Foundation::HWND,
+        ) -> windows_sys::core::HRESULT,
+    }
+
+    const CLSID_TASKBAR_LIST: windows_sys::core::GUID = windows_sys::core::GUID {
+        data1: 0x56FDF344,
+        data2: 0xFD6D,
+        data3: 0x11D0,
+        data4: [0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90],
+    };
+
+    const IID_ITASKBAR_LIST: windows_sys::core::GUID = windows_sys::core::GUID {
+        data1: 0x56FDF342,
+        data2: 0xFD6D,
+        data3: 0x11D0,
+        data4: [0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90],
+    };
+
+    unsafe {
+        let mut taskbar_list: *mut core::ffi::c_void = std::ptr::null_mut();
+        let hr = CoCreateInstance(
+            &CLSID_TASKBAR_LIST,
+            std::ptr::null_mut(),
+            CLSCTX_INPROC_SERVER,
+            &IID_ITASKBAR_LIST,
+            &mut taskbar_list,
+        );
+        if hr >= 0 && !taskbar_list.is_null() {
+            let tbl = taskbar_list as *mut ITaskbarList;
+            let vtbl = &*(*tbl).lp_vtbl;
+            let _ = (vtbl.HrInit)(taskbar_list);
+            let _ = (vtbl.DeleteTab)(taskbar_list, hwnd);
+            let _ = (vtbl.Release)(taskbar_list);
+        }
+    }
+}
+
+/// Hides the Slint window from the Windows taskbar immediately if its native window is available.
+pub fn hide_from_taskbar(window: &slint::Window) -> bool {
+    #[cfg(all(windows, feature = "slint-chrome"))]
+    {
+        use i_slint_backend_winit::WinitWindowAccessor;
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+        window
+            .with_winit_window(|w| {
+                if let Ok(handle) = w.window_handle() {
+                    if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+                        let hwnd = win32.hwnd.get() as isize as windows_sys::Win32::Foundation::HWND;
+                        hide_hwnd_from_taskbar(hwnd);
+                        return true;
+                    }
+                }
+                false
+            })
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(all(windows, feature = "slint-chrome")))]
+    {
+        let _ = window;
+        false
+    }
+}
+
+/// Configures Windows taskbar exclusion for the given Slint window.
+///
+/// On Windows, sets `WS_EX_TOOLWINDOW` and clears `WS_EX_APPWINDOW` on the underlying `HWND`
+/// and deletes the taskbar button using `ITaskbarList::DeleteTab`, matching the Linux behavior.
+/// Can be disabled by setting the `XTOOLS_SHOW_IN_TASKBAR=1` environment variable.
+pub fn setup_taskbar_exclusion<C: slint::ComponentHandle + 'static>(window: slint::Weak<C>) {
+    if std::env::var_os("XTOOLS_SHOW_IN_TASKBAR").is_some() {
+        return;
+    }
+
+    #[cfg(all(windows, feature = "slint-chrome"))]
+    {
+        if let Some(ui) = window.upgrade() {
+            if hide_from_taskbar(ui.window()) {
+                return;
+            }
+        }
+
+        fn poll_taskbar_exclusion<C: slint::ComponentHandle + 'static>(
+            window: slint::Weak<C>,
+            attempts_left: u32,
+        ) {
+            if attempts_left == 0 {
+                return;
+            }
+            slint::Timer::single_shot(Duration::from_millis(20), move || {
+                let Some(ui) = window.upgrade() else {
+                    return;
+                };
+                if !hide_from_taskbar(ui.window()) {
+                    poll_taskbar_exclusion(window, attempts_left - 1);
+                }
+            });
+        }
+
+        poll_taskbar_exclusion(window, 50);
+    }
+
+    #[cfg(not(all(windows, feature = "slint-chrome")))]
+    {
+        let _ = window;
+    }
+}
+
 
 /// Start a timer that automatically exits the process when the window has lost
 /// focus continuously for `timeout`.
@@ -464,6 +643,7 @@ where
                         if let RawWindowHandle::Win32(win32) = handle.as_raw() {
                             let h = win32.hwnd.get() as isize as windows_sys::Win32::Foundation::HWND;
                             hwnd = Some(h);
+                            hide_hwnd_from_taskbar(h);
                         }
                     }
                 });
@@ -810,5 +990,22 @@ mod tests {
 
         // Full 10s elapsed since t_lost2 -> now it exits!
         assert!(tracker.tick(false, t_lost2 + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn test_taskbar_exclusion_safe() {
+        slint::slint! {
+            export component TestExclusionWindow inherits Window {
+                width: 100px;
+                height: 100px;
+            }
+        }
+        let Ok(Ok(win)) =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(TestExclusionWindow::new))
+        else {
+            return;
+        };
+        let _ = hide_from_taskbar(win.window());
+        setup_taskbar_exclusion(win.as_weak());
     }
 }
