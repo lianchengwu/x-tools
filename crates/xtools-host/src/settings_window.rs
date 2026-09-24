@@ -507,4 +507,16 @@ mod tests {
         assert_eq!(config.selected_provider_id, "p1");
         assert_eq!(config.selected_model, "m1");
     }
+
+    #[test]
+    fn test_settings_window_update_ui_state() {
+        let ui = RunnerWindow::new().expect("create RunnerWindow");
+        ui.set_plugin_kind("settings".into());
+        ui.set_update_status("available".into());
+        ui.set_update_latest_version("0.8.7".into());
+        ui.set_update_release_notes("**Full Changelog**: https://github.com/lianchengwu/x-tools/compare/v0.8.6...v0.8.7".into());
+        assert_eq!(ui.get_update_status(), "available");
+        assert_eq!(ui.get_update_latest_version(), "0.8.7");
+        assert!(ui.get_update_release_notes().contains("Full Changelog"));
+    }
 }
