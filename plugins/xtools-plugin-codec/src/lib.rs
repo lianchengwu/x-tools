@@ -1,5 +1,6 @@
 pub mod codec_ops;
 pub mod id_gen;
+pub mod jwt;
 
 use codec_ops::{CODEC_KINDS, CodecKind, decode, empty_input, encode};
 use id_gen::{GeneratorConfig, ID_KINDS, IdKind, generate};
@@ -88,7 +89,7 @@ impl XPlugin for CodecPlugin {
             id: "xtools.codec".to_string(),
             name: "编码解码".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            description: "Unicode、UTF-8、URL、Hex、Base64 编解码与随机数、密码、UUIDv7、NanoID 等 ID 生成".to_string(),
+            description: "Unicode、UTF-8、URL、Hex、Base64、JWT 编解码与随机数、密码、UUIDv7、NanoID 等 ID 生成".to_string(),
             author: "xtools".to_string(),
             mark: "码".to_string(),
             icon_svg: None,
@@ -248,11 +249,17 @@ impl XPlugin for CodecPlugin {
             select("select_kind", kind_options, self.kind_index),
         ]));
 
+        let placeholder = if kind == CodecKind::Jwt {
+            "输入或粘贴 JWT 字符串（如 eyJhbGci... 或 Bearer eyJ...）进行解析，或输入 JSON 进行编码…"
+        } else {
+            "输入或粘贴要转换的文本…"
+        };
+
         children.push(UiNode::TextInput {
             id: "input_source".to_string(),
             label: None,
             value: self.input.clone(),
-            placeholder: "输入或粘贴要转换的文本…".to_string(),
+            placeholder: placeholder.to_string(),
             multiline: true,
             readonly: false,
             rows: Some(8),
@@ -260,9 +267,21 @@ impl XPlugin for CodecPlugin {
             monospace: true,
         });
 
+        let (btn1, btn2) = if kind == CodecKind::Jwt {
+            (
+                primary_button("btn_decode", kind.decode_label()),
+                button("btn_encode", kind.encode_label()),
+            )
+        } else {
+            (
+                primary_button("btn_encode", kind.encode_label()),
+                button("btn_decode", kind.decode_label()),
+            )
+        };
+
         children.push(row(vec![
-            primary_button("btn_encode", kind.encode_label()),
-            button("btn_decode", kind.decode_label()),
+            btn1,
+            btn2,
             button("btn_swap", "⇄"),
             spacer(),
         ]));
@@ -421,9 +440,17 @@ impl CodecPlugin {
                 self.output = out;
                 self.error = None;
                 self.status = if encoding {
-                    format!("已{} · {}", kind.encode_label(), kind.label())
+                    if kind == CodecKind::Jwt {
+                        "已生成 · JWT".to_string()
+                    } else {
+                        format!("已{} · {}", kind.encode_label(), kind.label())
+                    }
                 } else {
-                    format!("已{} · {}", kind.decode_label(), kind.label())
+                    if kind == CodecKind::Jwt {
+                        "已解析 · JWT".to_string()
+                    } else {
+                        format!("已{} · {}", kind.decode_label(), kind.label())
+                    }
                 };
             }
             Err(e) => {
@@ -486,8 +513,8 @@ mod tests {
         plugin
             .handle_event(UiEvent::SelectChanged {
                 id: "select_kind".into(),
-                index: 5,
-                value: "5".into(),
+                index: 6,
+                value: "6".into(),
             })
             .unwrap();
         assert_eq!(plugin.kind(), CodecKind::Case);
@@ -554,8 +581,8 @@ mod tests {
         plugin
             .handle_event(UiEvent::SelectChanged {
                 id: "select_kind".into(),
-                index: 6,
-                value: "6".into(),
+                index: 7,
+                value: "7".into(),
             })
             .unwrap();
         assert_eq!(plugin.kind(), CodecKind::Generator);
@@ -583,7 +610,7 @@ mod tests {
     #[test]
     fn generator_random_number_custom_length() {
         let mut plugin = CodecPlugin::init().unwrap();
-        plugin.kind_index = 6;
+        plugin.kind_index = 7;
         plugin
             .handle_event(UiEvent::SelectChanged {
                 id: "select_gen_kind".into(),
@@ -610,7 +637,7 @@ mod tests {
     #[test]
     fn generator_uuidv7_and_nanoid_and_snowflake() {
         let mut plugin = CodecPlugin::init().unwrap();
-        plugin.kind_index = 6;
+        plugin.kind_index = 7;
 
         // UUIDv7 (index 2)
         plugin
@@ -650,7 +677,7 @@ mod tests {
     #[test]
     fn generator_batch_count() {
         let mut plugin = CodecPlugin::init().unwrap();
-        plugin.kind_index = 6;
+        plugin.kind_index = 7;
         plugin.gen_kind_index = 2; // UUIDv7
         plugin
             .handle_event(UiEvent::Click {
@@ -662,5 +689,58 @@ mod tests {
         for line in lines {
             assert_eq!(line.len(), 36);
         }
+    }
+
+    #[test]
+    fn jwt_select_parse_and_encode() {
+        let sample_jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+        let mut plugin = CodecPlugin::init().unwrap();
+        plugin
+            .handle_event(UiEvent::SelectChanged {
+                id: "select_kind".into(),
+                index: 5,
+                value: "5".into(),
+            })
+            .unwrap();
+        assert_eq!(plugin.kind(), CodecKind::Jwt);
+
+        // Input token with Bearer prefix
+        plugin
+            .handle_event(UiEvent::InputChanged {
+                id: "input_source".into(),
+                value: format!("Bearer {sample_jwt}"),
+            })
+            .unwrap();
+
+        // Click decode
+        plugin
+            .handle_event(UiEvent::Click {
+                id: "btn_decode".into(),
+            })
+            .unwrap();
+        assert!(plugin.output.contains("=== HEADER (标头) ==="));
+        assert!(plugin.output.contains("=== PAYLOAD (载荷) ==="));
+        assert!(plugin.output.contains("\"John Doe\""));
+        assert!(plugin.output.contains("=== SIGNATURE (签名) ==="));
+        assert!(plugin.output.contains("=== CLAIMS (声明分析) ==="));
+        assert_eq!(plugin.status, "已解析 · JWT");
+        assert!(plugin.error.is_none());
+
+        // Swap output to input and encode back
+        plugin
+            .handle_event(UiEvent::Click {
+                id: "btn_swap".into(),
+            })
+            .unwrap();
+        plugin
+            .handle_event(UiEvent::Click {
+                id: "btn_encode".into(),
+            })
+            .unwrap();
+        let reparsed = crate::jwt::parse_jwt(&plugin.output).unwrap();
+        assert!(reparsed.contains("\"John Doe\""));
+        assert!(reparsed.contains("SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"));
+        assert!(reparsed.contains("算法 (alg): HS256"));
+        assert_eq!(plugin.status, "已生成 · JWT");
     }
 }

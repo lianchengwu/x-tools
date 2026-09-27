@@ -36,7 +36,7 @@
 | 🕒 | **`xtools.time`** 时间戳转换 | Unix 秒 / 毫秒时间戳与日期时间双向转换 | • 三栏联动实时换算<br/>• 多时区切换<br/>• 一键复制结果 |
 | {} | **`xtools.json`** JSON 格式化与校验 | JSON 工具集 | • 格式化 / 压缩 / 去转义 / 校验<br/>• 树形折叠浏览（展开 / 折叠 / 按层折叠）<br/>• 精确行列号错误定位 |
 | 文 | **`xtools.trans`** 智能翻译 | 多语言文本翻译 | • 双引擎：MyMemory（免密钥）/ 百度翻译 API<br/>• 语种互换、配置持久化<br/>• 划词粘贴即译<br/>• 百度密钥在托盘「设置」中配置 |
-| 码 | **`xtools.codec`** 编码解码 | Unicode / UTF-8 / URL / Hex / Base64 与大小写 | • 六种格式一键编码 / 解码<br/>• Unicode `\uXXXX`、UTF-8 `\xHH`、URL 百分号、Hex、Base64<br/>• 大小写转换（大写 / 小写）<br/>• 输入输出互换、一键复制 |
+| 码 | **`xtools.codec`** 编码解码 | Unicode / UTF-8 / URL / Hex / Base64 / JWT 与大小写 | • 多种格式一键编码 / 解码与解析<br/>• Unicode `\uXXXX`、UTF-8 `\xHH`、URL 百分号、Hex、Base64、JWT 解析<br/>• 大小写转换（大写 / 小写）<br/>• 输入输出互换、一键复制 |
 | 智 | **`xtools.ai`** AI 问答 | 基于 OpenAI 兼容接口的多轮 AI 对话 | • 打开自动填入剪贴板内容，手动点击发送<br/>• 聊天气泡界面，支持多轮上下文与历史恢复<br/>• 接口在托盘「设置」中统一配置 |
 
 ## 🏗️ 架构设计

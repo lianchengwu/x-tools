@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Unicode / UTF-8 / URL / Hex / Base64 / case encode-decode plugin for xtools"
+description = "Unicode / UTF-8 / URL / Hex / Base64 / JWT / case encode-decode plugin for xtools"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

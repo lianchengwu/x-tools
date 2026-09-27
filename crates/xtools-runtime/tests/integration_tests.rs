@@ -234,10 +234,34 @@ fn test_codec_plugin_lifecycle_encode_decode() {
         panic!("Expected UpdateView response");
     }
 
-    let evt_case = UiEvent::SelectChanged {
+    let evt_jwt = UiEvent::SelectChanged {
         id: "select_kind".to_string(),
         index: 5,
         value: "5".to_string(),
+    };
+    let _ = instance.handle_event(&evt_jwt).expect("Failed to switch to JWT");
+    let evt_jwt_input = UiEvent::InputChanged {
+        id: "input_source".to_string(),
+        value: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c".to_string(),
+    };
+    let _ = instance.handle_event(&evt_jwt_input).expect("Failed to input JWT text");
+    let resp_jwt = instance
+        .handle_event(&UiEvent::Click { id: "btn_decode".to_string() })
+        .expect("Failed to parse JWT");
+    if let UiResponse::UpdateView(view) = resp_jwt {
+        let serialized = serde_json::to_string(&view).unwrap();
+        assert!(serialized.contains("John Doe"), "{serialized}");
+        assert!(serialized.contains("HS256"), "{serialized}");
+        assert!(serialized.contains("HEADER"), "{serialized}");
+        assert!(serialized.contains("PAYLOAD"), "{serialized}");
+    } else {
+        panic!("Expected UpdateView response");
+    }
+
+    let evt_case = UiEvent::SelectChanged {
+        id: "select_kind".to_string(),
+        index: 6,
+        value: "6".to_string(),
     };
     let _ = instance.handle_event(&evt_case).expect("Failed to switch to case");
     let _ = instance
@@ -266,11 +290,11 @@ fn test_codec_plugin_generator_mode() {
     let loader = PluginLoader::new();
     let mut instance = loader.load_instance(&path).expect("Failed to load codec plugin");
 
-    // 1. Switch to Generator mode (index 6)
+    // 1. Switch to Generator mode (index 7)
     let evt_gen = UiEvent::SelectChanged {
         id: "select_kind".to_string(),
-        index: 6,
-        value: "6".to_string(),
+        index: 7,
+        value: "7".to_string(),
     };
     let resp = instance.handle_event(&evt_gen).expect("Failed to switch to generator");
     if let UiResponse::UpdateView(view) = resp {

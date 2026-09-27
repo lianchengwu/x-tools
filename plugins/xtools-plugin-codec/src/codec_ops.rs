@@ -7,16 +7,18 @@ pub enum CodecKind {
     Url,
     Hex,
     Base64,
+    Jwt,
     Case,
     Generator,
 }
 
-pub const CODEC_KINDS: [CodecKind; 7] = [
+pub const CODEC_KINDS: [CodecKind; 8] = [
     CodecKind::Unicode,
     CodecKind::Utf8,
     CodecKind::Url,
     CodecKind::Hex,
     CodecKind::Base64,
+    CodecKind::Jwt,
     CodecKind::Case,
     CodecKind::Generator,
 ];
@@ -33,6 +35,7 @@ impl CodecKind {
             CodecKind::Url => "URL",
             CodecKind::Hex => "Hex",
             CodecKind::Base64 => "Base64",
+            CodecKind::Jwt => "JWT",
             CodecKind::Case => "大小写",
             CodecKind::Generator => "随机与ID",
         }
@@ -45,6 +48,7 @@ impl CodecKind {
             CodecKind::Url => "URL：文本 ↔ %HH 百分号编码",
             CodecKind::Hex => "Hex：文本 ↔ UTF-8 十六进制",
             CodecKind::Base64 => "Base64：文本 ↔ Base64",
+            CodecKind::Jwt => "JWT：JSON Web Token 解析 Header / Payload / Signature 及 Claims 声明",
             CodecKind::Case => "大小写：编码→大写，解码→小写",
             CodecKind::Generator => "随机与ID：密码、随机数、UUIDv7、NanoID、雪花ID及其他ID生成",
         }
@@ -54,6 +58,7 @@ impl CodecKind {
         match self {
             CodecKind::Case => "大写",
             CodecKind::Generator => "⚡ 生成",
+            CodecKind::Jwt => "生成 JWT",
             _ => "编码",
         }
     }
@@ -61,6 +66,7 @@ impl CodecKind {
         match self {
             CodecKind::Case => "小写",
             CodecKind::Generator => "批量生成",
+            CodecKind::Jwt => "解析 JWT",
             _ => "解码",
         }
     }
@@ -77,6 +83,7 @@ pub fn encode(kind: CodecKind, input: &str) -> Result<String, String> {
         CodecKind::Url => Ok(encode_url(input)),
         CodecKind::Hex => Ok(encode_hex(input)),
         CodecKind::Base64 => Ok(encode_base64(input.as_bytes())),
+        CodecKind::Jwt => crate::jwt::encode_jwt(input),
         CodecKind::Case => Ok(input.to_uppercase()),
         CodecKind::Generator => Ok(input.to_string()),
     }
@@ -89,6 +96,7 @@ pub fn decode(kind: CodecKind, input: &str) -> Result<String, String> {
         CodecKind::Url => decode_url(input),
         CodecKind::Hex => decode_hex(input),
         CodecKind::Base64 => decode_base64_to_text(input),
+        CodecKind::Jwt => crate::jwt::parse_jwt(input),
         CodecKind::Case => Ok(input.to_lowercase()),
         CodecKind::Generator => Ok(input.to_string()),
     }
@@ -325,7 +333,7 @@ fn decode_hex(input: &str) -> Result<String, String> {
 
 const B64_TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-fn encode_base64(data: &[u8]) -> String {
+pub(crate) fn encode_base64(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let a = chunk[0];
@@ -347,12 +355,20 @@ fn encode_base64(data: &[u8]) -> String {
     }
     out
 }
+pub(crate) fn encode_base64_url(data: &[u8]) -> String {
+    let b64 = encode_base64(data);
+    b64.replace('+', "-")
+        .replace('/', "_")
+        .trim_end_matches('=')
+        .to_string()
+}
+
 
 fn decode_base64_to_text(input: &str) -> Result<String, String> {
     bytes_to_utf8(decode_base64(input)?, "Base64")
 }
 
-fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
     let mut filtered = Vec::with_capacity(input.len());
     for b in input.bytes() {
         if b.is_ascii_whitespace() {
@@ -368,6 +384,9 @@ fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
         return Err("非法的 Base64 填充".into());
     }
     let data_len = filtered.len() - pad;
+    if data_len % 4 == 1 {
+        return Err("非法的 Base64 长度".into());
+    }
     if !filtered[..data_len].iter().all(|&b| b64_val(b).is_some()) {
         return Err("非法的 Base64 字符".into());
     }
