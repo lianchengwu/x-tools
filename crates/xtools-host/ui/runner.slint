@@ -145,11 +145,16 @@ component AiReasoningBlock inherits Rectangle {
             }
 
             ScrollView {
+                horizontal-stretch: 1;
+                // 高度随折行后的内容走；过长时封顶并在块内滚动
                 height: min(reason-text.preferred-height, 220px);
                 viewport-width: self.visible-width;
                 viewport-height: reason-text.preferred-height;
 
                 reason-text := Text {
+                    // 显式吃满视口，否则 word-wrap 的首选宽度是整段不换行宽度，
+                    // 外层又没有宽度约束时会塌成标题栏那么窄
+                    width: parent.width;
                     text: root.reasoning;
                     font-size: 12px;
                     color: Theme.muted;
@@ -2174,24 +2179,65 @@ export component RunnerWindow inherits Window {
                 Rectangle {
                     vertical-stretch: 1;
 
-                    // 镜像消息模型用于观察变化：新消息入列 / 清空后滚动到底部
+                    // 钉在底部：新消息 / 流式输出，以及重开窗口后列表完成布局时滚到底。
+                    // 消息在 show 之前就写入，那时 viewport-height 还是 0，只靠 changed messages 会停在顶部。
+                    property <bool> stick-bottom: true;
+                    property <length> stick-seen-h: -1px;
+                    property <int> stick-stable: 0;
+                    function scroll-chat-bottom() {
+                        chat-list.viewport-y = Math.min(0px, chat-list.visible-height - chat-list.viewport-height);
+                    }
+                    function pin-chat-bottom() {
+                        stick-bottom = true;
+                        stick-seen-h = -1px;
+                        stick-stable = 0;
+                        scroll-chat-bottom();
+                    }
                     property <[AiChatMessage]> observed-messages: root.ai-messages;
-                    changed observed-messages => {
-                        chat-list.viewport-y = Math.min(0px, chat-list.visible-height - chat-list.viewport-height);
-                    }
-                    // 流式输出时跟随滚动
+                    changed observed-messages => { pin-chat-bottom(); }
                     property <string> observed-stream: root.ai-stream-text;
-                    changed observed-stream => {
-                        chat-list.viewport-y = Math.min(0px, chat-list.visible-height - chat-list.viewport-height);
-                    }
+                    changed observed-stream => { pin-chat-bottom(); }
                     property <string> observed-reasoning: root.ai-stream-reasoning;
-                    changed observed-reasoning => {
-                        chat-list.viewport-y = Math.min(0px, chat-list.visible-height - chat-list.viewport-height);
+                    changed observed-reasoning => { pin-chat-bottom(); }
+                    // 布局后高度才真实。show 前 visible-height 只有 ScrollView 的 min-height，不能在那时停手。
+                    property <length> laid-out-content: chat-list.viewport-height;
+                    changed laid-out-content => {
+                        if (stick-bottom) {
+                            scroll-chat-bottom();
+                        }
+                    }
+                    property <length> laid-out-visible: chat-list.visible-height;
+                    changed laid-out-visible => {
+                        if (stick-bottom) {
+                            scroll-chat-bottom();
+                        }
+                    }
+                    // 高度连续两拍不变且窗口已真正展开后放开，避免之后点放大把正在看的历史拽到底
+                    Timer {
+                        interval: 32ms;
+                        running: stick-bottom;
+                        triggered => {
+                            if (chat-list.visible-height <= 120px) {
+                                stick-stable = 0;
+                                return;
+                            }
+                            scroll-chat-bottom();
+                            if (chat-list.viewport-height == stick-seen-h) {
+                                stick-stable += 1;
+                                if (stick-stable >= 2) {
+                                    stick-bottom = false;
+                                }
+                            } else {
+                                stick-stable = 0;
+                                stick-seen-h = chat-list.viewport-height;
+                            }
+                        }
                     }
 
                     chat-list := ListView {
                         width: 100%;
                         height: 100%;
+
 
                         for msg in root.ai-messages : HorizontalLayout {
                             padding-left: 14px;
@@ -2203,7 +2249,14 @@ export component RunnerWindow inherits Window {
                             if msg.role == 0 : Rectangle { horizontal-stretch: 1; }
 
                             Rectangle {
-                                max-width: chat-list.width * 0.85;
+                                // 思考中没有正文撑开气泡。推理区 ScrollView 首选宽度为 0，
+                                // 会缩成「正在思考中…」标题那么窄；放大后窗口变宽也不会跟着长。
+                                // 按列表可视宽度展开，visible-width 随放大按钮变化。
+                                property <bool> thinking-fill: msg.role == 1 && msg.content == "" && (root.ai-pending || msg.reasoning != "");
+                                property <length> list-w: chat-list.visible-width > 1px ? chat-list.visible-width : chat-list.width;
+                                property <length> think-w: max(0px, list-w - 28px);
+                                min-width: thinking-fill ? think-w : 0px;
+                                max-width: thinking-fill ? think-w : (chat-list.width * 0.85);
                                 border-radius: 10px;
                                 background: msg.role == 0 ? Theme.primary : Theme.card-bg;
 
@@ -2217,8 +2270,8 @@ export component RunnerWindow inherits Window {
                                         spacing: 8px;
                                         alignment: start;
 
-                                        // 助手消息如果有思考过程，渲染折叠块
                                         if msg.role == 1 && msg.reasoning != "" : AiReasoningBlock {
+                                            width: 100%;
                                             reasoning: msg.reasoning;
                                             is-pending: root.ai-pending;
                                             has-content: msg.content != "";
