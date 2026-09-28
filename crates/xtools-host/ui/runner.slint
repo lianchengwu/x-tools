@@ -2667,9 +2667,11 @@ export component RunnerWindow inherits Window {
                                                 border-width: 1px;
                                                 border-color: Theme.border-subtle;
                                                 clip: true;
+                                                height: min(notes-body.preferred-height, 200px);
 
                                                 ScrollView {
-                                                    height: min(notes-body.preferred-height, 140px);
+                                                    width: 100%;
+                                                    height: 100%;
                                                     viewport-width: self.visible-width;
                                                     viewport-height: max(self.visible-height, notes-body.preferred-height);
                                                     notes-body := VerticalLayout {
