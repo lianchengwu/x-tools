@@ -151,15 +151,17 @@ component AiReasoningBlock inherits Rectangle {
                 viewport-width: self.visible-width;
                 viewport-height: reason-text.preferred-height;
 
-                reason-text := Text {
-                    // 显式吃满视口，否则 word-wrap 的首选宽度是整段不换行宽度，
-                    // 外层又没有宽度约束时会塌成标题栏那么窄
+                reason-text := TextInput {
                     width: parent.width;
                     text: root.reasoning;
+                    read-only: true;
+                    single-line: false;
+                    wrap: word-wrap;
                     font-size: 12px;
                     color: Theme.muted;
                     font-italic: true;
-                    wrap: word-wrap;
+                    selection-background-color: Theme.selection;
+                    selection-foreground-color: Theme.muted;
                 }
             }
         }
@@ -240,10 +242,11 @@ component ChatComposer inherits Rectangle {
                         }
                     }
                     cursor-position-changed(cpos) => {
+                        // 只在光标滚出可视区时才挪滚动条。点一下输入框不应把已滚动的位置拽到底。
                         if (cpos.y + scroll.viewport-y < 0px) {
                             scroll.viewport-y = min(0px, max(scroll.visible-height - self.height, -cpos.y));
-                        } else if (cpos.y + scroll.viewport-y > scroll.visible-height - 20px) {
-                            scroll.viewport-y = min(0px, max(scroll.visible-height - self.height, scroll.visible-height - cpos.y - 20px));
+                        } else if (cpos.y + self.font-size + scroll.viewport-y > scroll.visible-height) {
+                            scroll.viewport-y = min(0px, max(scroll.visible-height - self.height, scroll.visible-height - cpos.y - self.font-size));
                         }
                     }
                 }
@@ -2179,44 +2182,86 @@ export component RunnerWindow inherits Window {
                 Rectangle {
                     vertical-stretch: 1;
 
-                    // 钉在底部：新消息 / 流式输出，以及重开窗口后列表完成布局时滚到底。
-                    // 消息在 show 之前就写入，那时 viewport-height 还是 0，只靠 changed messages 会停在顶部。
+                    // 初次布局钉在底部。用户把列表滚离底部后不再跟底，
+                    // 点输入框、打字或焦点引起的高度变化都不能把正在看的位置拽下去。
                     property <bool> stick-bottom: true;
                     property <length> stick-seen-h: -1px;
                     property <int> stick-stable: 0;
+                    property <bool> applying-stick: false;
+                    property <bool> layout-ready: false;
+                    property <bool> detached: false;
+                    function at-bottom() -> bool {
+                        if (chat-list.viewport-height <= chat-list.visible-height + 2px) {
+                            return true;
+                        }
+                        return chat-list.viewport-y <= Math.min(0px, chat-list.visible-height - chat-list.viewport-height) + 28px;
+                    }
                     function scroll-chat-bottom() {
+                        applying-stick = true;
                         chat-list.viewport-y = Math.min(0px, chat-list.visible-height - chat-list.viewport-height);
+                        applying-stick = false;
                     }
                     function pin-chat-bottom() {
+                        if (detached) {
+                            return;
+                        }
                         stick-bottom = true;
                         stick-seen-h = -1px;
                         stick-stable = 0;
                         scroll-chat-bottom();
                     }
+                    property <length> tracked-y: chat-list.viewport-y;
+                    changed tracked-y => {
+                        if (applying-stick || !layout-ready) {
+                            return;
+                        }
+                        if (!at-bottom()) {
+                            detached = true;
+                            stick-bottom = false;
+                        } else {
+                            detached = false;
+                        }
+                    }
+                    property <int> seen-session: -1;
+                    property <int> tracked-session: root.ai-session-index;
+                    changed tracked-session => {
+                        if (seen-session >= 0 && tracked-session != seen-session) {
+                            detached = false;
+                            pin-chat-bottom();
+                        }
+                        seen-session = tracked-session;
+                    }
                     property <[AiChatMessage]> observed-messages: root.ai-messages;
-                    changed observed-messages => { pin-chat-bottom(); }
+                    changed observed-messages => {
+                        if (detached && root.ai-messages.length > 0 && root.ai-messages[root.ai-messages.length - 1].role == 0) {
+                            detached = false;
+                        }
+                        pin-chat-bottom();
+                    }
                     property <string> observed-stream: root.ai-stream-text;
                     changed observed-stream => { pin-chat-bottom(); }
                     property <string> observed-reasoning: root.ai-stream-reasoning;
                     changed observed-reasoning => { pin-chat-bottom(); }
-                    // 布局后高度才真实。show 前 visible-height 只有 ScrollView 的 min-height，不能在那时停手。
                     property <length> laid-out-content: chat-list.viewport-height;
                     changed laid-out-content => {
-                        if (stick-bottom) {
+                        if (stick-bottom && !detached) {
                             scroll-chat-bottom();
                         }
                     }
                     property <length> laid-out-visible: chat-list.visible-height;
                     changed laid-out-visible => {
-                        if (stick-bottom) {
+                        if (stick-bottom && !detached) {
                             scroll-chat-bottom();
                         }
                     }
-                    // 高度连续两拍不变且窗口已真正展开后放开，避免之后点放大把正在看的历史拽到底
                     Timer {
                         interval: 32ms;
                         running: stick-bottom;
                         triggered => {
+                            if (detached) {
+                                stick-bottom = false;
+                                return;
+                            }
                             if (chat-list.visible-height <= 120px) {
                                 stick-stable = 0;
                                 return;
@@ -2226,6 +2271,7 @@ export component RunnerWindow inherits Window {
                                 stick-stable += 1;
                                 if (stick-stable >= 2) {
                                     stick-bottom = false;
+                                    layout-ready = true;
                                 }
                             } else {
                                 stick-stable = 0;
@@ -2280,26 +2326,35 @@ export component RunnerWindow inherits Window {
                                             }
                                         }
 
-                                        // 无分段（空内容=思考中占位）
-                                        if msg.segments.length == 0 : Text {
-                                            text: msg.content == ""
-                                                ? (msg.reasoning != "" ? "" : "正在思考…")
-                                                : msg.content;
+                                        if msg.segments.length == 0 && msg.content == "" : Text {
+                                            text: msg.reasoning != "" ? "" : "正在思考…";
                                             font-size: Theme.font-size-body;
-                                            font-italic: msg.content == "";
-                                            color: msg.role == 0 ? Theme.primary-fg
-                                                : (msg.content == "" ? Theme.muted : Theme.foreground);
+                                            font-italic: true;
+                                            color: Theme.muted;
                                             wrap: word-wrap;
+                                        }
+                                        if msg.segments.length == 0 && msg.content != "" : TextInput {
+                                            text: msg.content;
+                                            read-only: true;
+                                            single-line: false;
+                                            wrap: word-wrap;
+                                            font-size: Theme.font-size-body;
+                                            color: msg.role == 0 ? Theme.primary-fg : Theme.foreground;
+                                            selection-background-color: Theme.selection;
+                                            selection-foreground-color: msg.role == 0 ? Theme.primary-fg : Theme.foreground;
                                         }
                                         for seg in msg.segments : VerticalLayout {
                                             spacing: 0px;
 
-                                            // 普通文本段
-                                            if !seg.is-code : Text {
+                                            if !seg.is-code : TextInput {
                                                 text: seg.text;
+                                                read-only: true;
+                                                single-line: false;
+                                                wrap: word-wrap;
                                                 font-size: Theme.font-size-body;
                                                 color: msg.role == 0 ? Theme.primary-fg : Theme.foreground;
-                                                wrap: word-wrap;
+                                                selection-background-color: Theme.selection;
+                                                selection-foreground-color: msg.role == 0 ? Theme.primary-fg : Theme.foreground;
                                             }
 
                                             // 代码段：语言标注 + 复制 + 逐 token 着色
