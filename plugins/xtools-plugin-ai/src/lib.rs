@@ -396,10 +396,11 @@ impl XPlugin for AiPlugin {
                 _ => Ok(UiResponse::NoChange),
             },
             UiEvent::InputChanged { id, value } => match id.as_str() {
+                // 草稿已在输入框里。整页刷新会替换消息模型，宿主据此把聊天列表拽到底。
                 "input_draft" => {
                     self.draft = value;
                     self.persist();
-                    Ok(UiResponse::UpdateView(self.render()))
+                    Ok(UiResponse::NoChange)
                 }
                 _ => Ok(UiResponse::NoChange),
             },
@@ -544,6 +545,24 @@ mod tests {
         assert!(err.contains("托盘") && err.contains("设置"));
         assert!(plugin.active().messages.is_empty());
     }
+
+    #[test]
+    fn test_draft_edit_persists_without_view_refresh() {
+        let mut plugin = AiPlugin::init().unwrap();
+        let resp = plugin
+            .handle_event(UiEvent::InputChanged {
+                id: "input_draft".to_string(),
+                value: "停留在这里".to_string(),
+            })
+            .unwrap();
+        assert!(matches!(resp, UiResponse::NoChange));
+        assert_eq!(plugin.draft, "停留在这里");
+
+        plugin.handle_event(UiEvent::Click { id: "btn_send".to_string() }).unwrap();
+        assert!(plugin.error.as_deref().unwrap().contains("托盘"));
+        assert_eq!(plugin.draft, "停留在这里");
+    }
+
 
     #[test]
     fn test_ai_plugin_unconfigured_message() {

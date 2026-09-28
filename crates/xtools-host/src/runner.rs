@@ -2164,6 +2164,18 @@ fn build_chat_segments(content: &str) -> slint::ModelRc<AiSegment> {
     slint::ModelRc::new(slint::VecModel::from(segments))
 }
 
+fn ai_rows_unchanged(current: &slint::ModelRc<AiChatMessage>, next: &[AiChatMessage]) -> bool {
+    if current.row_count() != next.len() {
+        return false;
+    }
+    next.iter().enumerate().all(|(i, item)| {
+        current.row_data(i).is_some_and(|row| {
+            row.role == item.role && row.content == item.content && row.reasoning == item.reasoning
+        })
+    })
+}
+
+
 fn sync_ai_view(ui: &RunnerWindow, root: &UiNode) {
     let mut messages: Vec<ChatMessage> = Vec::new();
     let mut draft = None;
@@ -2210,10 +2222,14 @@ fn sync_ai_view(ui: &RunnerWindow, root: &UiNode) {
             segments: build_chat_segments(&stream_text),
         });
     }
-    ui.set_ai_messages(slint::ModelRc::new(slint::VecModel::from(items)));
+    if !ai_rows_unchanged(&ui.get_ai_messages(), &items) {
+        ui.set_ai_messages(slint::ModelRc::new(slint::VecModel::from(items)));
+    }
 
     if let Some(d) = draft {
-        ui.set_ai_input(d.into());
+        if ui.get_ai_input().as_str() != d {
+            ui.set_ai_input(d.into());
+        }
     }
     ui.set_ai_error(error_text.into());
     if !status_text.is_empty() {
@@ -2410,5 +2426,24 @@ mod tests {
         assert_eq!(clean_trans_text("get_user_info_by_id"), "get user info by id");
         assert_eq!(clean_trans_text("---"), "");
         assert_eq!(clean_trans_text("MAX_RETRY-COUNT"), "MAX RETRY COUNT");
+    }
+
+    #[test]
+    fn unchanged_chat_rows_do_not_look_new() {
+        let rows = vec![AiChatMessage {
+            role: 1,
+            content: "回答".into(),
+            reasoning: "想过".into(),
+            segments: slint::ModelRc::default(),
+        }];
+        let model = slint::ModelRc::new(slint::VecModel::from(rows.clone()));
+        assert!(ai_rows_unchanged(&model, &rows));
+        let changed = vec![AiChatMessage {
+            role: 1,
+            content: "别的".into(),
+            reasoning: "想过".into(),
+            segments: slint::ModelRc::default(),
+        }];
+        assert!(!ai_rows_unchanged(&model, &changed));
     }
 }
