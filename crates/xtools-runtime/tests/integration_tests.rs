@@ -186,6 +186,80 @@ fn test_json_plugin_lifecycle_and_formatting() {
 }
 
 #[test]
+fn test_json_plugin_lifecycle_and_storage() {
+    let Some(path) = require_plugin_artifact("test_json_plugin_lifecycle_and_storage", "json") else {
+        return;
+    };
+    let temp_dir = std::env::temp_dir().join(format!("xtools-test-json-storage-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    let loader = PluginLoader::new().with_storage_root(temp_dir.clone());
+    let mut instance = loader.load_instance(&path).expect("Failed to load json plugin");
+
+    // 1. Initial view render
+    let view = instance.render().expect("Failed to render json view");
+    assert!(matches!(view.root, UiNode::Container { .. }));
+
+    // 2. Input custom JSON text
+    let test_json = r#"{"persistent_key": "persistent_val", "num": 100}"#;
+    let _ = instance
+        .handle_event(&UiEvent::InputChanged {
+            id: "json_code".to_string(),
+            value: test_json.to_string(),
+        })
+        .expect("Failed to input json text");
+
+    // 3. Verify storage persisted via host capability (SQLite)
+    let content = xtools_runtime::storage::read_from(&temp_dir, "xtools.json", "content.json")
+        .map(|b| String::from_utf8(b).unwrap())
+        .expect("Expected content.json to be written by host storage API");
+    assert!(
+        content.contains("persistent_val"),
+        "content.json should be persisted: {content}"
+    );
+
+    // 4. Format the JSON and verify storage updated
+    let _ = instance
+        .handle_event(&UiEvent::Click {
+            id: "btn_format".to_string(),
+        })
+        .expect("Failed to format json");
+
+    let content_formatted = xtools_runtime::storage::read_from(&temp_dir, "xtools.json", "content.json")
+        .map(|b| String::from_utf8(b).unwrap())
+        .expect("Expected updated content.json");
+    assert!(
+        content_formatted.contains(r"\n") || content_formatted.contains('\n'),
+        "Formatted json should be persisted: {content_formatted}"
+    );
+
+    // 5. Reload plugin instance using the same storage_root and verify last content is restored
+    let mut instance2 = loader.load_instance(&path).expect("Failed to reload json plugin");
+    let view2 = instance2.render().expect("Failed to render reloaded json view");
+    let serialized = serde_json::to_string(&view2).unwrap();
+    assert!(
+        serialized.contains("persistent_val"),
+        "Reloaded view should restore last content: {serialized}"
+    );
+
+    // 6. Test clear and persistence of empty state
+    let _ = instance2
+        .handle_event(&UiEvent::Click {
+            id: "btn_clear".to_string(),
+        })
+        .expect("Failed to clear json");
+
+    let mut instance3 = loader.load_instance(&path).expect("Failed to reload cleared json plugin");
+    let view3 = instance3.render().expect("Failed to render cleared json view");
+    let serialized3 = serde_json::to_string(&view3).unwrap();
+    assert!(
+        !serialized3.contains("persistent_val"),
+        "Cleared state should not contain old value: {serialized3}"
+    );
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
 fn test_codec_plugin_lifecycle_encode_decode() {
     let Some(path) = require_plugin_artifact("test_codec_plugin_lifecycle_encode_decode", "codec") else {
         return;

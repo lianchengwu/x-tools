@@ -6,6 +6,31 @@ use json_ops::{
 use serde::{Deserialize, Serialize};
 use xtools_sdk::*;
 
+pub const CONTENT_KEY: &str = "content.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct JsonPersistedState {
+    pub text: String,
+}
+
+pub fn parse_persisted_bytes(bytes: &[u8]) -> Option<String> {
+    if let Ok(state) = serde_json::from_slice::<JsonPersistedState>(bytes) {
+        return Some(state.text);
+    }
+    if let Ok(s) = serde_json::from_slice::<String>(bytes) {
+        return Some(s);
+    }
+    String::from_utf8(bytes.to_vec()).ok()
+}
+
+fn load_persisted_text() -> Option<String> {
+    let bytes = host::storage_get(CONTENT_KEY)
+        .ok()
+        .flatten()
+        .or_else(|| host::storage_get("content").ok().flatten())?;
+    parse_persisted_bytes(&bytes)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonPlugin {
     pub text: String,
@@ -14,6 +39,16 @@ pub struct JsonPlugin {
     pub active_tab: usize,
     pub tree: Option<JsonTree>,
     pub can_copy: bool,
+}
+
+impl JsonPlugin {
+    pub fn save_content(&self) {
+        if let Ok(bytes) = serde_json::to_vec(&JsonPersistedState {
+            text: self.text.clone(),
+        }) {
+            let _ = host::storage_set(CONTENT_KEY, &bytes);
+        }
+    }
 }
 
 impl XPlugin for JsonPlugin {
@@ -32,13 +67,20 @@ impl XPlugin for JsonPlugin {
                 resizable: true,
                 title: Some("JSON 格式化与校验".to_string()),
             },
-            permissions: vec![Permission::Clipboard],
+            permissions: vec![Permission::Clipboard, Permission::Storage],
         }
     }
 
     fn init() -> Result<Self, String> {
-        let initial_text = "{\n  \"hello\": \"xtools\",\n  \"wasm\": true,\n  \"version\": [0, 4, 0]\n}".to_string();
-        let tree = parse(&initial_text).ok().map(|val| JsonTree::from_value(&val));
+        let initial_text = load_persisted_text().unwrap_or_else(|| {
+            "{\n  \"hello\": \"xtools\",\n  \"wasm\": true,\n  \"version\": [0, 4, 0]\n}".to_string()
+        });
+        let tree = if !empty_input(&initial_text) {
+            parse(&initial_text).ok().map(|val| JsonTree::from_value(&val))
+        } else {
+            None
+        };
+        let can_copy = !empty_input(&initial_text);
 
         Ok(Self {
             text: initial_text,
@@ -46,7 +88,7 @@ impl XPlugin for JsonPlugin {
             note: None,
             active_tab: 0,
             tree,
-            can_copy: true,
+            can_copy,
         })
     }
 
@@ -140,6 +182,7 @@ impl XPlugin for JsonPlugin {
                             if let Ok(val) = parse(&self.text) {
                                 self.tree = Some(JsonTree::from_value(&val));
                             }
+                            self.save_content();
                         }
                         Err(issue) => {
                             self.error = Some(issue.display());
@@ -163,6 +206,7 @@ impl XPlugin for JsonPlugin {
                             if let Ok(val) = parse(&self.text) {
                                 self.tree = Some(JsonTree::from_value(&val));
                             }
+                            self.save_content();
                         }
                         Err(issue) => {
                             self.error = Some(issue.display());
@@ -186,6 +230,7 @@ impl XPlugin for JsonPlugin {
                             if let Ok(val) = parse(&self.text) {
                                 self.tree = Some(JsonTree::from_value(&val));
                             }
+                            self.save_content();
                         }
                         Err(issue) => {
                             self.error = Some(issue.display());
@@ -221,6 +266,7 @@ impl XPlugin for JsonPlugin {
                     self.note = None;
                     self.tree = None;
                     self.can_copy = false;
+                    self.save_content();
                     Ok(UiResponse::UpdateView(self.render()))
                 }
                 "btn_copy" => {
@@ -275,6 +321,7 @@ impl XPlugin for JsonPlugin {
                             }
                         }
                     }
+                    self.save_content();
                     Ok(UiResponse::UpdateView(self.render()))
                 } else {
                     Ok(UiResponse::NoChange)
@@ -382,5 +429,38 @@ mod tests {
         }).unwrap();
         let visible_after = plugin.tree.as_ref().unwrap().visible_nodes().len();
         assert!(visible_after < visible_before);
+    }
+
+    #[test]
+    fn test_json_persisted_state_deserialization() {
+        let state = JsonPersistedState {
+            text: "{\"saved\": true}".to_string(),
+        };
+        let bytes = serde_json::to_vec(&state).unwrap();
+        assert_eq!(
+            parse_persisted_bytes(&bytes),
+            Some("{\"saved\": true}".to_string())
+        );
+
+        let empty_state = JsonPersistedState {
+            text: "".to_string(),
+        };
+        let empty_bytes = serde_json::to_vec(&empty_state).unwrap();
+        assert_eq!(
+            parse_persisted_bytes(&empty_bytes),
+            Some("".to_string())
+        );
+
+        let bare_json = serde_json::to_vec("{\"bare\": 1}").unwrap();
+        assert_eq!(
+            parse_persisted_bytes(&bare_json),
+            Some("{\"bare\": 1}".to_string())
+        );
+
+        let raw_bytes = b"{\"raw\": true}".to_vec();
+        assert_eq!(
+            parse_persisted_bytes(&raw_bytes),
+            Some("{\"raw\": true}".to_string())
+        );
     }
 }
