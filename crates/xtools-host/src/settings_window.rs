@@ -43,6 +43,63 @@ fn check_accel_conflict(
     taken.then_some("快捷键已被其他工具占用")
 }
 
+fn is_cancel_key(key: &str) -> bool {
+    key.eq_ignore_ascii_case("escape")
+        || key.eq_ignore_ascii_case("esc")
+        || key == "\u{1b}"
+}
+
+fn slint_key_name(key: &str) -> Option<String> {
+    let named = match key {
+        "" | "\u{10}" | "\u{11}" | "\u{12}" | "\u{13}" | "\u{14}" | "\u{15}" | "\u{16}"
+        | "\u{17}" | "\u{18}" => return None,
+        " " | "Space" => "Space",
+        "\u{8}" | "Backspace" => "BackSpace",
+        "\u{9}" | "Tab" => "Tab",
+        "\n" | "\r" | "Return" | "Enter" => "Return",
+        "\u{7f}" | "Delete" => "Delete",
+        "\u{F700}" | "Up" | "UpArrow" => "Up",
+        "\u{F701}" | "Down" | "DownArrow" => "Down",
+        "\u{F702}" | "Left" | "LeftArrow" => "Left",
+        "\u{F703}" | "Right" | "RightArrow" => "Right",
+        "\u{F727}" | "Insert" => "Insert",
+        "\u{F729}" | "Home" => "Home",
+        "\u{F72B}" | "End" => "End",
+        "\u{F72C}" | "PageUp" => "Page_Up",
+        "\u{F72D}" | "PageDown" => "Page_Down",
+        other => {
+            if let Some(ch) = other.chars().next() {
+                if other.chars().count() == 1 && ('\u{F704}'..='\u{F70F}').contains(&ch) {
+                    return Some(function_key_name(ch).to_string());
+                }
+            }
+            other
+        }
+    };
+    if crate::shortcuts::Accel::parse(&format!("Ctrl+{named}")).is_ok() {
+        Some(named.to_string())
+    } else {
+        None
+    }
+}
+
+fn function_key_name(ch: char) -> &'static str {
+    match ch as u32 - 0xF704 {
+        0 => "F1",
+        1 => "F2",
+        2 => "F3",
+        3 => "F4",
+        4 => "F5",
+        5 => "F6",
+        6 => "F7",
+        7 => "F8",
+        8 => "F9",
+        9 => "F10",
+        10 => "F11",
+        _ => "F12",
+    }
+}
+#[derive(Debug)]
 enum KeyCapture {
     Cancel,
     Ignore,
@@ -60,16 +117,11 @@ fn interpret_shortcut_key(
     super_key: bool,
 ) -> KeyCapture {
     let key = key_text.trim();
-    if key.eq_ignore_ascii_case("escape") || key.eq_ignore_ascii_case("esc") {
+    if is_cancel_key(key) {
         return KeyCapture::Cancel;
     }
-    let mapped = match key {
-        "" => return KeyCapture::Ignore,
-        " " | "Space" => "Space",
-        "Backspace" => "BackSpace",
-        "PageUp" => "Page_Up",
-        "PageDown" => "Page_Down",
-        other => other,
+    let Some(mapped) = slint_key_name(key) else {
+        return KeyCapture::Ignore;
     };
     if !ctrl && !alt && !super_key {
         return KeyCapture::Ignore;
@@ -87,7 +139,7 @@ fn interpret_shortcut_key(
     if super_key {
         parts.push("Super");
     }
-    parts.push(mapped);
+    parts.push(mapped.as_str());
     let raw = parts.join("+");
     let Ok(accel) = crate::shortcuts::Accel::parse(&raw) else {
         return KeyCapture::Ignore;
@@ -841,5 +893,19 @@ mod shortcut_ui_tests {
             enabled: true,
         }];
         assert!(check_accel_conflict(&existing, "xtools.json", "Ctrl+Alt+J").is_none());
+    }
+
+    #[test]
+    fn test_slint_escape_cancels_and_f1_maps() {
+        let existing = Vec::new();
+        assert!(matches!(
+            interpret_shortcut_key(&existing, "xtools.json", "\u{1b}", true, false, false, false),
+            KeyCapture::Cancel
+        ));
+        match interpret_shortcut_key(&existing, "xtools.json", "\u{F704}", true, false, false, false)
+        {
+            KeyCapture::Accept(accel) => assert_eq!(accel, "Ctrl+F1"),
+            other => panic!("expected F1, got {other:?}"),
+        }
     }
 }

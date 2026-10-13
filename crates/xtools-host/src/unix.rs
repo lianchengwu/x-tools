@@ -578,16 +578,23 @@ fn poll_shortcuts(host: &Rc<RefCell<ShortcutHost>>) {
                 .find(|plugin| plugin.manifest.id == binding.plugin_id)?;
             Some(crate::shortcut_portal::PortalBind {
                 plugin_id: binding.plugin_id.clone(),
-                description: format!("打开{}", plugin.manifest.name),
+                description: plugin.manifest.name.clone(),
                 accel: binding.accel.clone(),
             })
         })
         .collect::<Vec<_>>();
-    if host.controller.is_none() && !binds.is_empty() {
-        host.controller = Some(crate::shortcut_portal::PortalShortcutController::start());
+    let send_failed = host
+        .controller
+        .as_ref()
+        .is_some_and(|controller| !controller.sync_bindings(binds.clone()));
+    if send_failed {
+        host.controller = None;
     }
-    if let Some(controller) = &host.controller {
-        controller.sync_bindings(binds);
+    if host.controller.is_none() && !binds.is_empty() {
+        let controller = crate::shortcut_portal::PortalShortcutController::start();
+        if controller.sync_bindings(binds) {
+            host.controller = Some(controller);
+        }
     }
 }
 fn handle_click(

@@ -1,7 +1,5 @@
 //! Wayland 全局快捷键。只在宿主进程里建门户会话，设置进程不调用这里。
 
-
-
 use futures_util::StreamExt;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
@@ -69,40 +67,60 @@ impl PortalShortcutController {
         Self { tx }
     }
 
-    pub fn sync_bindings(&self, bindings: Vec<PortalBind>) {
-        let _ = self.tx.send(bindings);
+    pub fn sync_bindings(&self, bindings: Vec<PortalBind>) -> bool {
+        self.tx.send(bindings).is_ok()
     }
 }
 
 async fn portal_loop(mut rx: UnboundedReceiver<Vec<PortalBind>>) {
-    let proxy = match ashpd::desktop::global_shortcuts::GlobalShortcuts::new().await {
-        Ok(proxy) => proxy,
-        Err(err) => {
-            log::warn!("全局快捷键门户不可用: {err}");
+    while let Some(binds) = rx.recv().await {
+        if binds.is_empty() {
+            continue;
+        }
+        let proxy = match ashpd::desktop::global_shortcuts::GlobalShortcuts::new().await {
+            Ok(proxy) => proxy,
+            Err(err) => {
+                log::warn!("全局快捷键门户不可用，下次配置变化再试: {err}");
+                continue;
+            }
+        };
+        let mut activated = match proxy.receive_activated().await {
+            Ok(stream) => stream,
+            Err(err) => {
+                log::warn!("无法订阅快捷键激活，下次配置变化再试: {err}");
+                continue;
+            }
+        };
+        let mut changed = match proxy.receive_shortcuts_changed().await {
+            Ok(stream) => stream,
+            Err(err) => {
+                log::warn!("无法订阅快捷键变更，下次配置变化再试: {err}");
+                continue;
+            }
+        };
+        if !run_session(&proxy, &mut activated, &mut changed, binds, &mut rx).await {
             return;
         }
-    };
-    let mut activated = match proxy.receive_activated().await {
-        Ok(stream) => stream,
-        Err(err) => {
-            log::warn!("无法订阅快捷键激活: {err}");
-            return;
-        }
-    };
-    let mut changed = match proxy.receive_shortcuts_changed().await {
-        Ok(stream) => stream,
-        Err(err) => {
-            log::warn!("无法订阅快捷键变更: {err}");
-            return;
-        }
-    };
-    let mut session: Option<
-        ashpd::desktop::Session<'_, ashpd::desktop::global_shortcuts::GlobalShortcuts<'_>>,
-    > = None;
+    }
+}
+
+async fn run_session<'a, A, C>(
+    proxy: &'a ashpd::desktop::global_shortcuts::GlobalShortcuts<'a>,
+    activated: &mut A,
+    changed: &mut C,
+    initial: Vec<PortalBind>,
+    rx: &mut UnboundedReceiver<Vec<PortalBind>>,
+) -> bool
+where
+    A: StreamExt<Item = ashpd::desktop::global_shortcuts::Activated> + Unpin,
+    C: StreamExt<Item = ashpd::desktop::global_shortcuts::ShortcutsChanged> + Unpin,
+{
+    let mut pending = Some(initial);
+    let mut session = None;
     loop {
         tokio::select! {
-            cmd = rx.recv() => {
-                let Some(binds) = cmd else { break };
+            cmd = rx.recv(), if pending.is_none() => {
+                let Some(binds) = cmd else { return false };
                 if let Some(old) = session.take() {
                     if let Err(err) = old.close().await {
                         log::warn!("关闭旧快捷键会话失败: {err}");
@@ -111,11 +129,9 @@ async fn portal_loop(mut rx: UnboundedReceiver<Vec<PortalBind>>) {
                 if binds.is_empty() {
                     continue;
                 }
-                match bind_once(&proxy, &binds).await {
-                    Ok(next) => session = Some(next),
-                    Err(err) => log::warn!("注册全局快捷键失败: {err}"),
-                }
+                pending = Some(binds);
             }
+            _ = bind_pending(proxy, &mut session, &mut pending), if pending.is_some() => {}
             event = activated.next() => {
                 let Some(event) = event else { continue };
                 let token = activation_token(&event);
@@ -127,16 +143,7 @@ async fn portal_loop(mut rx: UnboundedReceiver<Vec<PortalBind>>) {
             }
             event = changed.next() => {
                 let Some(event) = event else { continue };
-                let updates: Vec<(String, String)> = event
-                    .shortcuts()
-                    .iter()
-                    .map(|shortcut| {
-                        (
-                            shortcut.id().to_string(),
-                            shortcut.trigger_description().to_string(),
-                        )
-                    })
-                    .collect();
+                let updates = shortcut_updates(event.shortcuts());
                 gtk4::glib::idle_add(move || {
                     crate::unix::apply_shortcut_portal_updates(&updates);
                     gtk4::glib::ControlFlow::Break
@@ -146,11 +153,49 @@ async fn portal_loop(mut rx: UnboundedReceiver<Vec<PortalBind>>) {
     }
 }
 
+async fn bind_pending<'a>(
+    proxy: &'a ashpd::desktop::global_shortcuts::GlobalShortcuts<'a>,
+    session: &mut Option<ashpd::desktop::Session<'a, ashpd::desktop::global_shortcuts::GlobalShortcuts<'a>>>,
+    pending: &mut Option<Vec<PortalBind>>,
+) {
+    let Some(binds) = pending.take() else { return };
+    if let Some(old) = session.take() {
+        let _ = old.close().await;
+    }
+    match bind_once(proxy, &binds).await {
+        Ok((next, updates)) => {
+            if !updates.is_empty() {
+                gtk4::glib::idle_add(move || {
+                    crate::unix::apply_shortcut_portal_updates(&updates);
+                    gtk4::glib::ControlFlow::Break
+                });
+            }
+            *session = Some(next);
+        }
+        Err(err) => log::warn!("注册全局快捷键失败: {err}"),
+    }
+}
+
+fn shortcut_updates(shortcuts: &[ashpd::desktop::global_shortcuts::Shortcut]) -> Vec<(String, String)> {
+    shortcuts
+        .iter()
+        .map(|shortcut| {
+            (
+                shortcut.id().to_string(),
+                shortcut.trigger_description().to_string(),
+            )
+        })
+        .collect()
+}
+
 async fn bind_once<'a>(
     proxy: &'a ashpd::desktop::global_shortcuts::GlobalShortcuts<'a>,
     binds: &[PortalBind],
 ) -> Result<
-    ashpd::desktop::Session<'a, ashpd::desktop::global_shortcuts::GlobalShortcuts<'a>>,
+    (
+        ashpd::desktop::Session<'a, ashpd::desktop::global_shortcuts::GlobalShortcuts<'a>>,
+        Vec<(String, String)>,
+    ),
     String,
 > {
     let session = proxy
@@ -175,19 +220,32 @@ async fn bind_once<'a>(
         let _ = session.close().await;
         return Err("没有可注册的快捷键".into());
     }
-    let request = proxy
-        .bind_shortcuts(&session, &shortcuts, None)
-        .await
-        .map_err(|err| err.to_string())?;
-    request.response().map_err(|err| err.to_string())?;
-    Ok(session)
+    let bound = match proxy.bind_shortcuts(&session, &shortcuts, None).await {
+        Ok(request) => request,
+        Err(err) => {
+            let _ = session.close().await;
+            return Err(err.to_string());
+        }
+    };
+    let response = match bound.response() {
+        Ok(response) => response,
+        Err(err) => {
+            let _ = session.close().await;
+            return Err(err.to_string());
+        }
+    };
+    Ok((session, shortcut_updates(response.shortcuts())))
 }
 
 fn activation_token(event: &ashpd::desktop::global_shortcuts::Activated) -> Option<String> {
-    let value = event.options().get("activation_token")?;
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|json| json.as_str().map(str::to_string))
+    event
+        .options()
+        .get("activation_token")
+        .and_then(string_from_portal_value)
+}
+
+fn string_from_portal_value(value: &ashpd::zvariant::OwnedValue) -> Option<String> {
+    <&str>::try_from(value).ok().map(str::to_string)
 }
 
 #[cfg(test)]
@@ -234,5 +292,11 @@ mod portal_tests {
         assert!(!should_start_portal("x11", 2));
         assert!(!should_start_portal("wayland", 0));
         assert!(should_start_portal("wayland", 1));
+    }
+
+    #[test]
+    fn test_activation_token_reads_owned_string() {
+        let value = ashpd::zvariant::OwnedValue::from(ashpd::zvariant::Str::from("tok-1"));
+        assert_eq!(string_from_portal_value(&value).as_deref(), Some("tok-1"));
     }
 }
