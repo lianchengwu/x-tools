@@ -35,7 +35,9 @@ slint-build = { workspace = true }
 gtk4 = { version = "0.11.4", features = ["v4_12"] }
 gtk4-layer-shell = { version = "0.8.1", features = ["v1_3"] }
 ksni = { version = "0.3.6", default-features = false, features = ["async-io", "blocking"] }
-
+ashpd = { version = "0.11", default-features = false, features = ["tokio"] }
+tokio = { version = "1", features = ["rt", "sync", "macros"] }
+futures-util = "0.3"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",

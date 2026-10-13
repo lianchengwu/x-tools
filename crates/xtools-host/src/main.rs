@@ -24,6 +24,8 @@ mod input;
 #[cfg(unix)]
 mod overlay;
 #[cfg(unix)]
+mod shortcut_portal;
+#[cfg(unix)]
 mod tray;
 #[cfg(unix)]
 mod unix;

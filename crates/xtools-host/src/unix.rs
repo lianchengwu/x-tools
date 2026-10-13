@@ -470,6 +470,126 @@ fn launch_plugin(plugin: &DiscoveredPlugin, token: Option<&str>) {
     }
 }
 
+pub(crate) fn open_plugin_by_id(plugin_id: &str, token: Option<&str>) {
+    let Some(plugin) = crate::runner::discover_plugins()
+        .into_iter()
+        .find(|plugin| plugin.manifest.id == plugin_id)
+    else {
+        log::warn!("快捷键对应插件不存在: {plugin_id}");
+        return;
+    };
+    launch_plugin(&plugin, token);
+}
+
+struct ShortcutHost {
+    controller: Option<crate::shortcut_portal::PortalShortcutController>,
+    applied: Vec<crate::shortcuts::ShortcutBinding>,
+    mtime: Option<std::time::SystemTime>,
+    logged_skip: bool,
+}
+
+thread_local! {
+    static SHORTCUT_HOST: RefCell<Option<Rc<RefCell<ShortcutHost>>>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn apply_shortcut_portal_updates(updates: &[(String, String)]) {
+    SHORTCUT_HOST.with(|slot| {
+        let Some(host) = slot.borrow().clone() else {
+            return;
+        };
+        let mut host = host.borrow_mut();
+        let mut next = host.applied.clone();
+        for (id, trigger) in updates {
+            next = crate::shortcut_portal::apply_portal_trigger(&next, id, trigger);
+        }
+        if crate::shortcuts::bindings_equal(&host.applied, &next) {
+            return;
+        }
+        host.applied = next.clone();
+        let mut disk = crate::shortcuts::ShortcutFile::load();
+        for binding in &next {
+            if let Some(row) = disk
+                .bindings
+                .iter_mut()
+                .find(|row| row.plugin_id == binding.plugin_id)
+            {
+                row.accel = binding.accel.clone();
+            }
+        }
+        if let Err(err) = disk.save() {
+            log::warn!("回写快捷键失败: {err}");
+        }
+    });
+}
+
+fn install_shortcut_watch() {
+    let host = Rc::new(RefCell::new(ShortcutHost {
+        controller: None,
+        applied: Vec::new(),
+        mtime: None,
+        logged_skip: false,
+    }));
+    SHORTCUT_HOST.with(|slot| *slot.borrow_mut() = Some(host.clone()));
+    poll_shortcuts(&host);
+    glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
+        poll_shortcuts(&host);
+        glib::ControlFlow::Continue
+    });
+}
+
+fn poll_shortcuts(host: &Rc<RefCell<ShortcutHost>>) {
+    let session = std::env::var("XDG_SESSION_TYPE").unwrap_or_default();
+    let mut host = host.borrow_mut();
+    if session != "wayland" {
+        if !host.logged_skip {
+            log::info!("当前会话不是 Wayland，不注册全局快捷键");
+            host.logged_skip = true;
+        }
+        return;
+    }
+    let path = crate::shortcuts::ShortcutFile::path();
+    let mtime = std::fs::metadata(&path)
+        .and_then(|meta| meta.modified())
+        .ok();
+    if mtime.is_some() && mtime == host.mtime {
+        return;
+    }
+    let file = crate::shortcuts::ShortcutFile::load();
+    let discovered = crate::runner::discover_plugins();
+    let ids: Vec<String> = discovered
+        .iter()
+        .map(|plugin| plugin.manifest.id.clone())
+        .collect();
+    let active: Vec<_> = file
+        .active_bindings(&ids)
+        .into_iter()
+        .cloned()
+        .collect();
+    host.mtime = mtime;
+    if crate::shortcuts::bindings_equal(&host.applied, &active) {
+        return;
+    }
+    host.applied = active.clone();
+    let binds = active
+        .iter()
+        .filter_map(|binding| {
+            let plugin = discovered
+                .iter()
+                .find(|plugin| plugin.manifest.id == binding.plugin_id)?;
+            Some(crate::shortcut_portal::PortalBind {
+                plugin_id: binding.plugin_id.clone(),
+                description: format!("打开{}", plugin.manifest.name),
+                accel: binding.accel.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    if host.controller.is_none() && !binds.is_empty() {
+        host.controller = Some(crate::shortcut_portal::PortalShortcutController::start());
+    }
+    if let Some(controller) = &host.controller {
+        controller.sync_bindings(binds);
+    }
+}
 fn handle_click(
     area: &DrawingArea,
     state: &Rc<RefCell<Host>>,
@@ -922,6 +1042,7 @@ pub fn run() {
         // 4. Spawn tray
         let tray_open = Arc::new(AtomicBool::new(false));
         tray::spawn_tray(tray_open);
+        install_shortcut_watch();
     });
 
     app.run();
