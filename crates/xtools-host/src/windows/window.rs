@@ -513,7 +513,7 @@ impl HostWindow {
                 let cur_cy = anim::lerp(self.main_ly, *cy, amount);
                 if hit_disk(lx, ly, cur_cx, cur_cy, func_r) {
                     if let Some(p) = self.plugins.get(idx).cloned() {
-                        launch_plugin(&p);
+                        launch_plugin(&p, None);
                     }
                     self.snap_collapse();
                     return;
@@ -600,14 +600,14 @@ fn get_window_dpi(hwnd: HWND) -> u32 {
 }
 
 /// 已有窗口则拉起，否则用自身二进制 `xtools run <wasm>` 启动插件窗口
-fn launch_plugin(plugin: &DiscoveredPlugin) {
+fn launch_plugin(plugin: &DiscoveredPlugin, token: Option<&str>) {
     unsafe {
         windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(
             windows_sys::Win32::UI::WindowsAndMessaging::ASFW_ANY,
         );
     }
     let instance_name = plugin.manifest.id.replace('.', "-");
-    if raise_instance(&instance_name, None).unwrap_or(false) {
+    if raise_instance(&instance_name, token).unwrap_or(false) {
         log::info!("Raised existing window for {instance_name}");
         return;
     }
@@ -722,7 +722,7 @@ unsafe extern "system" fn window_proc(
                 } else if id >= ID_TRAY_PLUGIN_BASE {
                     let idx = id - ID_TRAY_PLUGIN_BASE;
                     if let Some(p) = host.plugins.get(idx) {
-                        launch_plugin(p);
+                        launch_plugin(p, None);
                     }
                 }
                 0

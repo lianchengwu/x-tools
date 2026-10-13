@@ -427,12 +427,12 @@ fn snap_collapse(area: &DrawingArea, state: &Rc<RefCell<Host>>) {
     area.queue_draw();
 }
 
-fn launch_plugin(plugin: &DiscoveredPlugin) {
+fn launch_plugin(plugin: &DiscoveredPlugin, token: Option<&str>) {
     let instance_name = plugin.manifest.id.replace('.', "-");
     let wasm_arg = plugin.path.to_string_lossy().to_string();
     let desktop = xtools_ui::kwin::current_desktop();
 
-    if raise_instance(&instance_name, None).unwrap_or(false) {
+    if raise_instance(&instance_name, token).unwrap_or(false) {
         log::info!("Raised existing window for {}", instance_name);
         xtools_ui::kwin::raise_window(0, Some(&plugin.manifest.name));
         return;
@@ -443,10 +443,7 @@ fn launch_plugin(plugin: &DiscoveredPlugin) {
     let mut cmd = Command::new(self_exe);
     cmd.arg("run");
     cmd.arg(&wasm_arg);
-    cmd.env_remove("XDG_ACTIVATION_TOKEN");
-    cmd.env_remove("DESKTOP_STARTUP_ID");
-    cmd.env_remove("GIO_LAUNCHED_DESKTOP_FILE_PID");
-    cmd.env_remove("GIO_LAUNCHED_DESKTOP_FILE");
+    crate::runner::configure_launch_env(&mut cmd, token);
 
     if let Some(desk) = &desktop {
         cmd.env("XTOOLS_TARGET_DESKTOP", desk);
@@ -493,7 +490,7 @@ fn handle_click(
     if let Some(idx) = on_func_idx {
         let plugin = state.borrow().plugins.get(idx).cloned();
         if let Some(p) = plugin {
-            launch_plugin(&p);
+            launch_plugin(&p, None);
         }
         begin_collapse(area, state);
         return;
@@ -643,7 +640,7 @@ fn show_context_menu(area: &DrawingArea, state: &Rc<RefCell<Host>>, x: f64, y: f
             let popover = popover.clone();
             btn.connect_clicked(move |_| {
                 popover.popdown();
-                launch_plugin(&p);
+                launch_plugin(&p, None);
             });
             content.append(&btn);
         }

@@ -86,7 +86,7 @@ impl Tray for XtoolsTray {
                 StandardItem {
                     label,
                     activate: Box::new(move |_| {
-                        crate::runner::launch_plugin(&p);
+                        crate::runner::launch_plugin(&p, None);
                     }),
                     ..Default::default()
                 }

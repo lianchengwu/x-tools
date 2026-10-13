@@ -187,7 +187,19 @@ pub fn discover_plugins() -> Vec<DiscoveredPlugin> {
     discovered
 }
 
-pub fn launch_plugin(plugin: &DiscoveredPlugin) {
+/// 有 token 时注入 `XDG_ACTIVATION_TOKEN`；没有则清掉，避免子进程吃到过期令牌。
+pub(crate) fn configure_launch_env(cmd: &mut std::process::Command, token: Option<&str>) {
+    if let Some(token) = token.filter(|t| !t.is_empty()) {
+        cmd.env("XDG_ACTIVATION_TOKEN", token);
+    } else {
+        cmd.env_remove("XDG_ACTIVATION_TOKEN");
+    }
+    cmd.env_remove("DESKTOP_STARTUP_ID");
+    cmd.env_remove("GIO_LAUNCHED_DESKTOP_FILE_PID");
+    cmd.env_remove("GIO_LAUNCHED_DESKTOP_FILE");
+}
+
+pub fn launch_plugin(plugin: &DiscoveredPlugin, token: Option<&str>) {
     let instance_name = plugin.manifest.id.replace('.', "-");
     let wasm_arg = plugin.path.to_string_lossy().to_string();
 
@@ -198,7 +210,7 @@ pub fn launch_plugin(plugin: &DiscoveredPlugin) {
         );
     }
 
-    if raise_instance(&instance_name, None).unwrap_or(false) {
+    if raise_instance(&instance_name, token).unwrap_or(false) {
         log::info!("Raised existing window for {}", instance_name);
         #[cfg(unix)]
         xtools_ui::kwin::raise_window(0, Some(&plugin.manifest.name));
@@ -212,10 +224,7 @@ pub fn launch_plugin(plugin: &DiscoveredPlugin) {
 
     #[cfg(unix)]
     {
-        cmd.env_remove("XDG_ACTIVATION_TOKEN");
-        cmd.env_remove("DESKTOP_STARTUP_ID");
-        cmd.env_remove("GIO_LAUNCHED_DESKTOP_FILE_PID");
-        cmd.env_remove("GIO_LAUNCHED_DESKTOP_FILE");
+        configure_launch_env(&mut cmd, token);
 
         if let Some(desk) = &xtools_ui::kwin::current_desktop() {
             cmd.env("XTOOLS_TARGET_DESKTOP", desk);
@@ -2445,5 +2454,26 @@ mod tests {
             segments: slint::ModelRc::default(),
         }];
         assert!(!ai_rows_unchanged(&model, &changed));
+    }
+
+    #[test]
+    fn test_apply_activation_token_to_command() {
+        let mut cmd = std::process::Command::new("dummy");
+        super::configure_launch_env(&mut cmd, Some("test_token_123"));
+        let envs: Vec<_> = cmd.get_envs().collect();
+        assert!(envs.iter().any(|(k, v)| {
+            *k == "XDG_ACTIVATION_TOKEN" && *v == Some(std::ffi::OsStr::new("test_token_123"))
+        }));
+    }
+
+    #[test]
+    fn test_apply_none_activation_token_clears_env() {
+        let mut cmd = std::process::Command::new("dummy");
+        cmd.env("XDG_ACTIVATION_TOKEN", "stale_token");
+        super::configure_launch_env(&mut cmd, None);
+        let envs: Vec<_> = cmd.get_envs().collect();
+        assert!(envs
+            .iter()
+            .any(|(k, v)| *k == "XDG_ACTIVATION_TOKEN" && v.is_none()));
     }
 }
