@@ -2,6 +2,7 @@
 
 mod ai_config;
 mod ai_highlight;
+mod shortcuts;
 mod ai_runtime;
 mod anim;
 mod layout;
