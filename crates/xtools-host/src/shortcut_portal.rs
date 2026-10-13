@@ -1,7 +1,9 @@
 //! Wayland 全局快捷键。只在宿主进程里建门户会话，设置进程不调用这里。
+//! 执行器必须是 async-io，和托盘的 ksni/zbus 一致。启用 zbus 的 tokio 特性会让托盘线程在没有
+//! Tokio runtime 时 panic。
 
+use async_channel::{Receiver, Sender};
 use futures_util::StreamExt;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::shortcuts::{Accel, ShortcutBinding};
 
@@ -42,38 +44,28 @@ pub struct PortalBind {
 }
 
 pub struct PortalShortcutController {
-    tx: UnboundedSender<Vec<PortalBind>>,
+    tx: Sender<Vec<PortalBind>>,
 }
 
 impl PortalShortcutController {
     pub fn start() -> Self {
-        let (tx, rx) = unbounded_channel();
+        let (tx, rx) = async_channel::unbounded();
         std::thread::Builder::new()
             .name("xtools-shortcuts".into())
             .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => runtime,
-                    Err(err) => {
-                        log::warn!("快捷键运行时创建失败: {err}");
-                        return;
-                    }
-                };
-                runtime.block_on(portal_loop(rx));
+                async_io::block_on(portal_loop(rx));
             })
             .ok();
         Self { tx }
     }
 
     pub fn sync_bindings(&self, bindings: Vec<PortalBind>) -> bool {
-        self.tx.send(bindings).is_ok()
+        self.tx.try_send(bindings).is_ok()
     }
 }
 
-async fn portal_loop(mut rx: UnboundedReceiver<Vec<PortalBind>>) {
-    while let Some(binds) = rx.recv().await {
+async fn portal_loop(rx: Receiver<Vec<PortalBind>>) {
+    while let Ok(binds) = rx.recv().await {
         if binds.is_empty() {
             continue;
         }
@@ -98,10 +90,17 @@ async fn portal_loop(mut rx: UnboundedReceiver<Vec<PortalBind>>) {
                 continue;
             }
         };
-        if !run_session(&proxy, &mut activated, &mut changed, binds, &mut rx).await {
+        if !run_session(&proxy, &mut activated, &mut changed, binds, &rx).await {
             return;
         }
     }
+}
+
+enum Step<A, C> {
+    Cmd(Option<Vec<PortalBind>>),
+    Bound,
+    Activated(Option<A>),
+    Changed(Option<C>),
 }
 
 async fn run_session<'a, A, C>(
@@ -109,7 +108,7 @@ async fn run_session<'a, A, C>(
     activated: &mut A,
     changed: &mut C,
     initial: Vec<PortalBind>,
-    rx: &mut UnboundedReceiver<Vec<PortalBind>>,
+    rx: &Receiver<Vec<PortalBind>>,
 ) -> bool
 where
     A: StreamExt<Item = ashpd::desktop::global_shortcuts::Activated> + Unpin,
@@ -118,22 +117,32 @@ where
     let mut pending = Some(initial);
     let mut session = None;
     loop {
-        tokio::select! {
-            cmd = rx.recv(), if pending.is_none() => {
-                let Some(binds) = cmd else { return false };
+        let waiting_for_cmd = pending.is_none();
+        let step = poll_step(
+            proxy,
+            activated,
+            changed,
+            rx,
+            &mut session,
+            &mut pending,
+            waiting_for_cmd,
+        )
+        .await;
+        match step {
+            Step::Cmd(None) => return false,
+            Step::Cmd(Some(binds)) => {
                 if let Some(old) = session.take() {
                     if let Err(err) = old.close().await {
                         log::warn!("关闭旧快捷键会话失败: {err}");
                     }
                 }
-                if binds.is_empty() {
-                    continue;
+                if !binds.is_empty() {
+                    pending = Some(binds);
                 }
-                pending = Some(binds);
             }
-            _ = bind_pending(proxy, &mut session, &mut pending), if pending.is_some() => {}
-            event = activated.next() => {
-                let Some(event) = event else { continue };
+            Step::Bound => {}
+            Step::Activated(None) => continue,
+            Step::Activated(Some(event)) => {
                 let token = activation_token(&event);
                 let id = event.shortcut_id().to_string();
                 gtk4::glib::idle_add(move || {
@@ -141,8 +150,8 @@ where
                     gtk4::glib::ControlFlow::Break
                 });
             }
-            event = changed.next() => {
-                let Some(event) = event else { continue };
+            Step::Changed(None) => continue,
+            Step::Changed(Some(event)) => {
                 let updates = shortcut_updates(event.shortcuts());
                 gtk4::glib::idle_add(move || {
                     crate::unix::apply_shortcut_portal_updates(&updates);
@@ -150,6 +159,59 @@ where
                 });
             }
         }
+    }
+}
+
+async fn poll_step<'a, A, C>(
+    proxy: &'a ashpd::desktop::global_shortcuts::GlobalShortcuts<'a>,
+    activated: &mut A,
+    changed: &mut C,
+    rx: &Receiver<Vec<PortalBind>>,
+    session: &mut Option<ashpd::desktop::Session<'a, ashpd::desktop::global_shortcuts::GlobalShortcuts<'a>>>,
+    pending: &mut Option<Vec<PortalBind>>,
+    waiting_for_cmd: bool,
+) -> Step<ashpd::desktop::global_shortcuts::Activated, ashpd::desktop::global_shortcuts::ShortcutsChanged>
+where
+    A: StreamExt<Item = ashpd::desktop::global_shortcuts::Activated> + Unpin,
+    C: StreamExt<Item = ashpd::desktop::global_shortcuts::ShortcutsChanged> + Unpin,
+{
+    let cmd = async {
+        if !waiting_for_cmd {
+            std::future::pending().await
+        } else {
+            rx.recv().await.ok()
+        }
+    };
+    let bind = async {
+        if waiting_for_cmd {
+            std::future::pending().await
+        } else {
+            bind_pending(proxy, session, pending).await;
+        }
+    };
+    let activated_next = activated.next();
+    let changed_next = changed.next();
+    futures_util::pin_mut!(cmd, bind, activated_next, changed_next);
+    match futures_util::future::select(
+        futures_util::future::select(cmd, bind),
+        futures_util::future::select(activated_next, changed_next),
+    )
+    .await
+    {
+        futures_util::future::Either::Left((futures_util::future::Either::Left((cmd, _)), _)) => {
+            Step::Cmd(cmd)
+        }
+        futures_util::future::Either::Left((futures_util::future::Either::Right((_, _)), _)) => {
+            Step::Bound
+        }
+        futures_util::future::Either::Right((
+            futures_util::future::Either::Left((event, _)),
+            _,
+        )) => Step::Activated(event),
+        futures_util::future::Either::Right((
+            futures_util::future::Either::Right((event, _)),
+            _,
+        )) => Step::Changed(event),
     }
 }
 
@@ -176,7 +238,9 @@ async fn bind_pending<'a>(
     }
 }
 
-fn shortcut_updates(shortcuts: &[ashpd::desktop::global_shortcuts::Shortcut]) -> Vec<(String, String)> {
+fn shortcut_updates(
+    shortcuts: &[ashpd::desktop::global_shortcuts::Shortcut],
+) -> Vec<(String, String)> {
     shortcuts
         .iter()
         .map(|shortcut| {
