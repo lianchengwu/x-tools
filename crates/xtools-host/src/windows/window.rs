@@ -18,7 +18,9 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    RegisterHotKey, ReleaseCapture, SetCapture, UnregisterHotKey,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA,
     GetCursorPos, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, HTCLIENT, HTTRANSPARENT,
@@ -26,7 +28,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SetTimer, SetWindowLongPtrW, SetWindowPos,
     ShowWindow, SystemParametersInfoW, SPI_GETWORKAREA, SM_CXSCREEN, SM_CYSCREEN, ULW_ALPHA,
     UpdateLayeredWindow, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_NCHITTEST, WM_NCRBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_TIMER,
+    WM_MOUSEMOVE, WM_NCHITTEST, WM_NCRBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_TIMER, WM_HOTKEY,
     WNDCLASSEXW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use xtools_protocol::PluginManifest;
@@ -46,6 +48,7 @@ use crate::windows::tray::{
 
 const TIMER_ANIM: usize = 1;
 const TIMER_IPC: usize = 2;
+const TIMER_SHORTCUTS: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Menu {
@@ -102,6 +105,9 @@ pub struct HostWindow {
     dib_bits: *mut u32,
     tray: Option<TrayIcon>,
     listener: Option<xtools_ui::InstanceListener>,
+    hotkeys: Vec<(i32, String)>,
+    applied_shortcuts: Vec<crate::shortcuts::ShortcutBinding>,
+    shortcut_mtime: Option<std::time::SystemTime>,
 }
 
 impl HostWindow {
@@ -177,6 +183,9 @@ impl HostWindow {
             dib_bits,
             tray,
             listener: Some(listener),
+            hotkeys: Vec::new(),
+            applied_shortcuts: Vec::new(),
+            shortcut_mtime: None,
         };
         host.reload_plugins();
 
@@ -193,6 +202,7 @@ impl HostWindow {
             );
             ShowWindow(hwnd, SW_SHOW);
             SetTimer(hwnd, TIMER_IPC, 100, None);
+            SetTimer(hwnd, TIMER_SHORTCUTS, 1000, None);
         }
 
         host
@@ -399,6 +409,53 @@ impl HostWindow {
                     None => {}
                 }
             }
+        } else if timer_id == TIMER_SHORTCUTS {
+            self.poll_shortcuts();
+        }
+    }
+
+    fn poll_shortcuts(&mut self) {
+        let path = crate::shortcuts::ShortcutFile::path();
+        let mtime = std::fs::metadata(&path)
+            .and_then(|meta| meta.modified())
+            .ok();
+        if mtime.is_some() && mtime == self.shortcut_mtime {
+            return;
+        }
+        let file = crate::shortcuts::ShortcutFile::load();
+        let ids: Vec<String> = self.plugins.iter().map(|p| p.manifest.id.clone()).collect();
+        let active: Vec<_> = file.active_bindings(&ids).into_iter().cloned().collect();
+        self.shortcut_mtime = mtime;
+        if crate::shortcuts::bindings_equal(&self.applied_shortcuts, &active) {
+            return;
+        }
+        self.reload_shortcuts(&active);
+    }
+
+    fn reload_shortcuts(&mut self, active: &[crate::shortcuts::ShortcutBinding]) {
+        self.unregister_hotkeys();
+        let mut next_id = 1i32;
+        for binding in active {
+            let Ok(accel) = crate::shortcuts::Accel::parse(&binding.accel) else {
+                continue;
+            };
+            let (mods, vk) = accel.to_win_hotkey();
+            let ok = unsafe { RegisterHotKey(self.hwnd, next_id, mods, vk) } != 0;
+            if ok {
+                self.hotkeys.push((next_id, binding.plugin_id.clone()));
+                next_id += 1;
+            } else {
+                log::warn!("RegisterHotKey 失败: {}", binding.plugin_id);
+            }
+        }
+        self.applied_shortcuts = active.to_vec();
+    }
+
+    fn unregister_hotkeys(&mut self) {
+        for (id, _) in self.hotkeys.drain(..) {
+            unsafe {
+                UnregisterHotKey(self.hwnd, id);
+            }
         }
     }
 
@@ -553,6 +610,7 @@ impl HostWindow {
 
 impl Drop for HostWindow {
     fn drop(&mut self) {
+        self.unregister_hotkeys();
         unsafe {
             if !self.mem_dc.is_null() {
                 DeleteDC(self.mem_dc);
@@ -733,6 +791,27 @@ unsafe extern "system" fn window_proc(
                     host.toggle_visibility();
                 } else if event == WM_RBUTTONUP {
                     host.on_rbutton_up();
+                }
+                0
+            }
+            WM_HOTKEY => {
+                let id = wparam as i32;
+                if let Some(plugin_id) = host
+                    .hotkeys
+                    .iter()
+                    .find(|(hotkey_id, _)| *hotkey_id == id)
+                    .map(|(_, plugin_id)| plugin_id.clone())
+                {
+                    if let Some(plugin) = host
+                        .plugins
+                        .iter()
+                        .find(|plugin| plugin.manifest.id == plugin_id)
+                        .cloned()
+                    {
+                        launch_plugin(&plugin, None);
+                    } else {
+                        log::warn!("快捷键对应插件不存在: {plugin_id}");
+                    }
                 }
                 0
             }
