@@ -22,6 +22,293 @@ slint::include_modules!();
 
 const INSTANCE_NAME: &str = "xtools-settings";
 
+fn check_accel_conflict(
+    existing: &[crate::shortcuts::ShortcutBinding],
+    plugin_id: &str,
+    accel: &str,
+) -> Option<&'static str> {
+    let Ok(parsed) = crate::shortcuts::Accel::parse(accel) else {
+        return Some("快捷键无效");
+    };
+    let canonical = parsed.format_canonical();
+    let taken = existing.iter().any(|binding| {
+        binding.plugin_id != plugin_id
+            && !binding.accel.is_empty()
+            && crate::shortcuts::Accel::parse(&binding.accel)
+                .map(|accel| accel.format_canonical())
+                .ok()
+                .as_deref()
+                == Some(canonical.as_str())
+    });
+    taken.then_some("快捷键已被其他工具占用")
+}
+
+enum KeyCapture {
+    Cancel,
+    Ignore,
+    Conflict,
+    Accept(String),
+}
+
+fn interpret_shortcut_key(
+    existing: &[crate::shortcuts::ShortcutBinding],
+    plugin_id: &str,
+    key_text: &str,
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    super_key: bool,
+) -> KeyCapture {
+    let key = key_text.trim();
+    if key.eq_ignore_ascii_case("escape") || key.eq_ignore_ascii_case("esc") {
+        return KeyCapture::Cancel;
+    }
+    let mapped = match key {
+        "" => return KeyCapture::Ignore,
+        " " | "Space" => "Space",
+        "Backspace" => "BackSpace",
+        "PageUp" => "Page_Up",
+        "PageDown" => "Page_Down",
+        other => other,
+    };
+    if !ctrl && !alt && !super_key {
+        return KeyCapture::Ignore;
+    }
+    let mut parts = Vec::new();
+    if ctrl {
+        parts.push("Ctrl");
+    }
+    if alt {
+        parts.push("Alt");
+    }
+    if shift {
+        parts.push("Shift");
+    }
+    if super_key {
+        parts.push("Super");
+    }
+    parts.push(mapped);
+    let raw = parts.join("+");
+    let Ok(accel) = crate::shortcuts::Accel::parse(&raw) else {
+        return KeyCapture::Ignore;
+    };
+    let canonical = accel.format_canonical();
+    if check_accel_conflict(existing, plugin_id, &canonical).is_some() {
+        return KeyCapture::Conflict;
+    }
+    KeyCapture::Accept(canonical)
+}
+
+struct ShortcutEditor {
+    plugins: Vec<(String, String, String)>,
+    recording_id: String,
+    conflict_id: String,
+    conflict: String,
+}
+
+fn publish_shortcuts(ui: &RunnerWindow, editor: &ShortcutEditor) {
+    let file = crate::shortcuts::ShortcutFile::load();
+    let items: Vec<ShortcutItem> = editor
+        .plugins
+        .iter()
+        .map(|(id, name, mark)| {
+            let binding = file.bindings.iter().find(|b| &b.plugin_id == id);
+            ShortcutItem {
+                id: id.into(),
+                name: name.into(),
+                mark: mark.into(),
+                accel: binding.map(|b| b.accel.as_str()).unwrap_or("").into(),
+                enabled: binding.map(|b| b.enabled).unwrap_or(false),
+                recording: editor.recording_id == *id,
+                conflict: if editor.conflict_id == *id {
+                    editor.conflict.clone()
+                } else {
+                    String::new()
+                }
+                .into(),
+            }
+        })
+        .collect();
+    ui.set_settings_shortcuts(slint::ModelRc::new(slint::VecModel::from(items)));
+    ui.set_settings_shortcut_recording_id(editor.recording_id.clone().into());
+}
+
+fn save_visible_shortcuts(
+    editor: &ShortcutEditor,
+    desired: &[crate::shortcuts::ShortcutBinding],
+) -> Result<(), String> {
+    let mut disk = crate::shortcuts::ShortcutFile::load();
+    let visible: std::collections::HashSet<&str> =
+        editor.plugins.iter().map(|(id, _, _)| id.as_str()).collect();
+    disk.bindings.retain(|b| !visible.contains(b.plugin_id.as_str()));
+    disk.bindings
+        .extend(desired.iter().filter(|b| !b.accel.is_empty()).cloned());
+    disk.save()
+}
+
+fn visible_bindings(editor: &ShortcutEditor) -> Vec<crate::shortcuts::ShortcutBinding> {
+    let file = crate::shortcuts::ShortcutFile::load();
+    editor
+        .plugins
+        .iter()
+        .filter_map(|(id, _, _)| file.bindings.iter().find(|b| &b.plugin_id == id).cloned())
+        .collect()
+}
+
+fn install_shortcut_editor(ui: &RunnerWindow) {
+    let plugins = crate::runner::discover_plugins()
+        .into_iter()
+        .map(|plugin| {
+            (
+                plugin.manifest.id,
+                plugin.manifest.name,
+                plugin.manifest.mark,
+            )
+        })
+        .collect();
+    let editor = Rc::new(RefCell::new(ShortcutEditor {
+        plugins,
+        recording_id: String::new(),
+        conflict_id: String::new(),
+        conflict: String::new(),
+    }));
+    publish_shortcuts(ui, &editor.borrow());
+
+    {
+        let editor = editor.clone();
+        let ui_w = ui.as_weak();
+        ui.on_shortcut_record_clicked(move |id| {
+            let id = id.to_string();
+            let mut editor = editor.borrow_mut();
+            if editor.recording_id == id {
+                editor.recording_id.clear();
+            } else {
+                editor.recording_id = id;
+                editor.conflict_id.clear();
+                editor.conflict.clear();
+            }
+            if let Some(ui) = ui_w.upgrade() {
+                publish_shortcuts(&ui, &editor);
+            }
+        });
+    }
+    {
+        let editor = editor.clone();
+        let ui_w = ui.as_weak();
+        ui.on_shortcut_clear_clicked(move |id| {
+            let id = id.to_string();
+            let editor_ref = editor.borrow();
+            let mut desired = visible_bindings(&editor_ref);
+            desired.retain(|b| b.plugin_id != id);
+            if let Err(e) = save_visible_shortcuts(&editor_ref, &desired) {
+                show_toast(ui_w.clone(), &e, false);
+                return;
+            }
+            drop(editor_ref);
+            let mut editor = editor.borrow_mut();
+            if editor.recording_id == id {
+                editor.recording_id.clear();
+            }
+            if editor.conflict_id == id {
+                editor.conflict_id.clear();
+                editor.conflict.clear();
+            }
+            if let Some(ui) = ui_w.upgrade() {
+                publish_shortcuts(&ui, &editor);
+                flash_autosave(ui.as_weak());
+            }
+        });
+    }
+    {
+        let editor = editor.clone();
+        let ui_w = ui.as_weak();
+        ui.on_shortcut_toggle_enabled(move |id, enabled| {
+            let id = id.to_string();
+            let editor_ref = editor.borrow();
+            let mut desired = visible_bindings(&editor_ref);
+            let Some(binding) = desired.iter_mut().find(|b| b.plugin_id == id) else {
+                return;
+            };
+            if binding.accel.is_empty() {
+                return;
+            }
+            binding.enabled = enabled;
+            if let Err(e) = save_visible_shortcuts(&editor_ref, &desired) {
+                show_toast(ui_w.clone(), &e, false);
+                return;
+            }
+            drop(editor_ref);
+            if let Some(ui) = ui_w.upgrade() {
+                publish_shortcuts(&ui, &editor.borrow());
+                flash_autosave(ui.as_weak());
+            }
+        });
+    }
+    {
+        let editor = editor.clone();
+        let ui_w = ui.as_weak();
+        ui.on_shortcut_key_captured(move |id, key, ctrl, alt, shift, super_key| {
+            let id = id.to_string();
+            let editor_ref = editor.borrow();
+            if editor_ref.recording_id != id {
+                return;
+            }
+            let existing = visible_bindings(&editor_ref);
+            match interpret_shortcut_key(&existing, &id, &key, ctrl, alt, shift, super_key) {
+                KeyCapture::Ignore => {}
+                KeyCapture::Cancel => {
+                    drop(editor_ref);
+                    let mut editor = editor.borrow_mut();
+                    editor.recording_id.clear();
+                    editor.conflict_id.clear();
+                    editor.conflict.clear();
+                    if let Some(ui) = ui_w.upgrade() {
+                        publish_shortcuts(&ui, &editor);
+                    }
+                }
+                KeyCapture::Conflict => {
+                    drop(editor_ref);
+                    let mut editor = editor.borrow_mut();
+                    editor.conflict_id = id;
+                    editor.conflict = "快捷键已被其他工具占用".into();
+                    if let Some(ui) = ui_w.upgrade() {
+                        publish_shortcuts(&ui, &editor);
+                    }
+                }
+                KeyCapture::Accept(accel) => {
+                    let mut desired = existing;
+                    let enabled = desired
+                        .iter()
+                        .find(|b| b.plugin_id == id)
+                        .map(|b| b.enabled)
+                        .unwrap_or(false);
+                    desired.retain(|b| b.plugin_id != id);
+                    desired.push(crate::shortcuts::ShortcutBinding {
+                        plugin_id: id.clone(),
+                        accel,
+                        enabled,
+                    });
+                    if let Err(e) = save_visible_shortcuts(&editor_ref, &desired) {
+                        show_toast(ui_w.clone(), &e, false);
+                        return;
+                    }
+                    drop(editor_ref);
+                    let mut editor = editor.borrow_mut();
+                    editor.recording_id.clear();
+                    editor.conflict_id.clear();
+                    editor.conflict.clear();
+                    if let Some(ui) = ui_w.upgrade() {
+                        publish_shortcuts(&ui, &editor);
+                        flash_autosave(ui.as_weak());
+                    }
+                }
+            }
+        });
+    }
+}
+
+// -----------------------------------------------------------------------------
+// 设置窗口
 // -----------------------------------------------------------------------------
 // 设置窗口
 // -----------------------------------------------------------------------------
@@ -443,6 +730,8 @@ pub fn run_settings(auto_check_update: bool) -> Result<(), Box<dyn std::error::E
         trigger_check_update(ui.as_weak());
     }
 
+    install_shortcut_editor(&ui);
+
     let _raise_timer = setup_raise_timer(lock, ui.as_weak());
     setup_taskbar_exclusion(ui.as_weak());
 
@@ -518,5 +807,39 @@ mod tests {
         assert_eq!(ui.get_update_status(), "available");
         assert_eq!(ui.get_update_latest_version(), "0.8.7");
         assert!(ui.get_update_release_notes().contains("Full Changelog"));
+    }
+}
+
+#[cfg(test)]
+mod shortcut_ui_tests {
+    use super::*;
+    use crate::shortcuts::ShortcutBinding;
+
+    #[test]
+    fn test_record_conflict_detection() {
+        let existing = vec![
+            ShortcutBinding {
+                plugin_id: "xtools.time".into(),
+                accel: "Ctrl+Alt+T".into(),
+                enabled: true,
+            },
+            ShortcutBinding {
+                plugin_id: "xtools.json".into(),
+                accel: String::new(),
+                enabled: false,
+            },
+        ];
+        let conflict = check_accel_conflict(&existing, "xtools.json", "Ctrl+Alt+T");
+        assert_eq!(conflict, Some("快捷键已被其他工具占用"));
+    }
+
+    #[test]
+    fn test_record_non_conflict() {
+        let existing = vec![ShortcutBinding {
+            plugin_id: "xtools.time".into(),
+            accel: "Ctrl+Alt+T".into(),
+            enabled: true,
+        }];
+        assert!(check_accel_conflict(&existing, "xtools.json", "Ctrl+Alt+J").is_none());
     }
 }

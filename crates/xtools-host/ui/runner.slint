@@ -1,5 +1,5 @@
 import { ToolShell, MultilineEditor, ActionButton, CopyButton, IconButton, ValueInput, FieldWithAction, DropdownSelector, InlineError, InlineNote, Theme } from "@xtools-ui/components.slint";
-import { ListView, ScrollView, Slider } from "std-widgets.slint";
+import { ListView, ScrollView, Slider, Switch } from "std-widgets.slint";
 
 export struct TreeNodeItem {
     id: int,
@@ -185,6 +185,15 @@ export struct CodecGenRow {
     has-item2: bool,
 }
 
+export struct ShortcutItem {
+    id: string,
+    name: string,
+    mark: string,
+    accel: string,
+    enabled: bool,
+    recording: bool,
+    conflict: string,
+}
 // AI 聊天输入框：上编辑区 + 框内底部「模型选择 / 发送」工具条
 component ChatComposer inherits Rectangle {
     in-out property <string> text;
@@ -513,6 +522,12 @@ export component RunnerWindow inherits Window {
     in-out property <[AiProviderItem]> ai-providers: [];
     in-out property <float> settings-opacity-percent: 100;
     in-out property <bool> settings-autosave-visible: false;
+    in-out property <[ShortcutItem]> settings-shortcuts: [];
+    in-out property <string> settings-shortcut-recording-id: "";
+    callback shortcut-record-clicked(string);
+    callback shortcut-clear-clicked(string);
+    callback shortcut-toggle-enabled(string, bool);
+    callback shortcut-key-captured(string, string, bool, bool, bool, bool);
     callback opacity-changed(float);
     callback ai-provider-added();
     callback ai-provider-removed(string);
@@ -3010,6 +3025,118 @@ export component RunnerWindow inherits Window {
                                         color: Theme.foreground;
                                         vertical-alignment: center;
                                         horizontal-alignment: right;
+                                    }
+                                }
+                            }
+                        }
+
+                        shortcut-capture := FocusScope {
+                            key-pressed(event) => {
+                                if (root.settings-shortcut-recording-id == "") {
+                                    reject
+                                } else {
+                                    root.shortcut-key-captured(
+                                        root.settings-shortcut-recording-id,
+                                        event.text,
+                                        event.modifiers.control,
+                                        event.modifiers.alt,
+                                        event.modifiers.shift,
+                                        event.modifiers.meta
+                                    );
+                                    accept
+                                }
+                            }
+
+                            Rectangle {
+                                border-radius: Theme.radius-control;
+                                border-width: 1px;
+                                border-color: Theme.border-subtle;
+                                background: Theme.card-bg;
+
+                                VerticalLayout {
+                                    padding: 14px;
+                                    spacing: 8px;
+
+                                    Text {
+                                        text: "⌨ 工具快捷键";
+                                        font-size: Theme.font-size-small;
+                                        font-weight: 600;
+                                        color: Theme.foreground;
+                                    }
+
+                                    Text {
+                                        text: "点击「录制」后按下组合键（需包含 Ctrl/Alt/Super），开启后由悬浮球全局注册。需要悬浮球在运行；仅 Wayland 会话会真正注册；第一次绑定以及之后每次重新绑定，桌面可能弹出系统授权。";
+                                        font-size: Theme.font-size-small;
+                                        color: Theme.muted;
+                                        wrap: word-wrap;
+                                    }
+
+                                    for item in root.settings-shortcuts : VerticalLayout {
+                                        spacing: 4px;
+
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: stretch;
+
+                                            Text {
+                                                text: item.mark == "" ? "•" : item.mark;
+                                                min-width: 28px;
+                                                font-size: Theme.font-size-small;
+                                                vertical-alignment: center;
+                                                horizontal-alignment: center;
+                                            }
+
+                                            Text {
+                                                text: item.name;
+                                                font-size: Theme.font-size-small;
+                                                font-weight: 600;
+                                                vertical-alignment: center;
+                                                min-width: 96px;
+                                            }
+
+                                            Text {
+                                                text: item.recording
+                                                    ? "请按下组合键，Esc 取消"
+                                                    : (item.accel == "" ? "未设置" : item.accel);
+                                                font-size: Theme.font-size-small;
+                                                font-family: Theme.font-mono;
+                                                color: item.recording ? Theme.primary : Theme.foreground;
+                                                vertical-alignment: center;
+                                                horizontal-stretch: 1;
+                                                overflow: elide;
+                                            }
+
+                                            ActionButton {
+                                                text: item.recording ? "录制中…" : "录制";
+                                                min-btn-width: 72px;
+                                                is-primary: item.recording;
+                                                clicked => {
+                                                    shortcut-capture.focus();
+                                                    root.shortcut-record-clicked(item.id);
+                                                }
+                                            }
+
+                                            ActionButton {
+                                                text: "清除";
+                                                min-btn-width: 56px;
+                                                enabled: item.accel != "";
+                                                clicked => { root.shortcut-clear-clicked(item.id); }
+                                            }
+
+                                            Switch {
+                                                checked: item.enabled;
+                                                enabled: item.accel != "" && !item.recording;
+                                                toggled => {
+                                                    root.shortcut-toggle-enabled(item.id, self.checked);
+                                                }
+                                            }
+                                        }
+
+                                        if item.conflict != "" : Text {
+                                            text: item.conflict;
+                                            font-size: Theme.font-size-small;
+                                            color: Theme.error-fg;
+                                        }
                                     }
                                 }
                             }
