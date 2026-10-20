@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Unicode / UTF-8 / URL / Hex / Base64 / JWT / case encode-decode plugin for xtools"
+description = "Unicode / UTF-8 / URL / Hex / Base64 / JWT / checksum plugin for xtools"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -13,3 +13,6 @@ crate-type = ["cdylib", "rlib"]
 xtools-sdk = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"

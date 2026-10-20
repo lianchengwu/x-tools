@@ -1231,6 +1231,26 @@ pub fn run_plugin(plugin_arg: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
         {
             let h = handle_event.clone();
+            ui.on_codec_format_changed(move |idx| {
+                h(UiEvent::SelectChanged {
+                    id: "select_format".to_string(),
+                    index: idx as usize,
+                    value: idx.to_string(),
+                });
+            });
+        }
+        {
+            let h = handle_event.clone();
+            ui.on_codec_hash_changed(move |idx| {
+                h(UiEvent::SelectChanged {
+                    id: "select_hash".to_string(),
+                    index: idx as usize,
+                    value: idx.to_string(),
+                });
+            });
+        }
+        {
+            let h = handle_event.clone();
             ui.on_codec_gen_kind_changed(move |idx| {
                 h(UiEvent::SelectChanged {
                     id: "select_gen_kind".to_string(),
@@ -1942,6 +1962,8 @@ fn sync_codec_view(ui: &RunnerWindow, root: &UiNode) {
     let mut source = None;
     let mut target = None;
     let mut kind_idx = 0;
+    let mut format_idx = None;
+    let mut hash_idx = None;
     let mut gen_kind_idx = None;
     let mut gen_length = None;
     let mut gen_count = None;
@@ -1958,6 +1980,8 @@ fn sync_codec_view(ui: &RunnerWindow, root: &UiNode) {
         &mut source,
         &mut target,
         &mut kind_idx,
+        &mut format_idx,
+        &mut hash_idx,
         &mut gen_kind_idx,
         &mut gen_length,
         &mut gen_count,
@@ -2004,6 +2028,12 @@ fn sync_codec_view(ui: &RunnerWindow, root: &UiNode) {
         ui.set_codec_output(t.into());
     }
     ui.set_codec_kind_index(kind_idx as i32);
+    if let Some(f) = format_idx {
+        ui.set_codec_format_index(f as i32);
+    }
+    if let Some(h) = hash_idx {
+        ui.set_codec_hash_index(h as i32);
+    }
     if let Some(gk) = gen_kind_idx {
         ui.set_codec_gen_kind_index(gk as i32);
     }
@@ -2040,6 +2070,8 @@ fn collect_codec_nodes(
     source: &mut Option<String>,
     target: &mut Option<String>,
     kind_idx: &mut usize,
+    format_idx: &mut Option<usize>,
+    hash_idx: &mut Option<usize>,
     gen_kind_idx: &mut Option<usize>,
     gen_length: &mut Option<String>,
     gen_count: &mut Option<String>,
@@ -2059,6 +2091,8 @@ fn collect_codec_nodes(
                     source,
                     target,
                     kind_idx,
+                    format_idx,
+                    hash_idx,
                     gen_kind_idx,
                     gen_length,
                     gen_count,
@@ -2079,6 +2113,8 @@ fn collect_codec_nodes(
                     source,
                     target,
                     kind_idx,
+                    format_idx,
+                    hash_idx,
                     gen_kind_idx,
                     gen_length,
                     gen_count,
@@ -2103,6 +2139,8 @@ fn collect_codec_nodes(
             id, selected_index, ..
         } => match id.as_str() {
             "select_kind" => *kind_idx = *selected_index,
+            "select_format" => *format_idx = Some(*selected_index),
+            "select_hash" => *hash_idx = Some(*selected_index),
             "select_gen_kind" => *gen_kind_idx = Some(*selected_index),
             _ => {}
         },

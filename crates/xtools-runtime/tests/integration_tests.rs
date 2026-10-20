@@ -287,7 +287,7 @@ fn test_codec_plugin_lifecycle_encode_decode() {
     }
 
     let evt_kind = UiEvent::SelectChanged {
-        id: "select_kind".to_string(),
+        id: "select_format".to_string(),
         index: 4,
         value: "4".to_string(),
     };
@@ -310,8 +310,8 @@ fn test_codec_plugin_lifecycle_encode_decode() {
 
     let evt_jwt = UiEvent::SelectChanged {
         id: "select_kind".to_string(),
-        index: 5,
-        value: "5".to_string(),
+        index: 1,
+        value: "1".to_string(),
     };
     let _ = instance.handle_event(&evt_jwt).expect("Failed to switch to JWT");
     let evt_jwt_input = UiEvent::InputChanged {
@@ -332,10 +332,16 @@ fn test_codec_plugin_lifecycle_encode_decode() {
         panic!("Expected UpdateView response");
     }
 
-    let evt_case = UiEvent::SelectChanged {
+    let evt_codec = UiEvent::SelectChanged {
         id: "select_kind".to_string(),
-        index: 6,
-        value: "6".to_string(),
+        index: 0,
+        value: "0".to_string(),
+    };
+    let _ = instance.handle_event(&evt_codec).expect("Failed to switch back to codec");
+    let evt_case = UiEvent::SelectChanged {
+        id: "select_format".to_string(),
+        index: 5,
+        value: "5".to_string(),
     };
     let _ = instance.handle_event(&evt_case).expect("Failed to switch to case");
     let _ = instance
@@ -364,11 +370,11 @@ fn test_codec_plugin_generator_mode() {
     let loader = PluginLoader::new();
     let mut instance = loader.load_instance(&path).expect("Failed to load codec plugin");
 
-    // 1. Switch to Generator mode (index 7)
+    // 1. Switch to Generator mode (index 2)
     let evt_gen = UiEvent::SelectChanged {
         id: "select_kind".to_string(),
-        index: 7,
-        value: "7".to_string(),
+        index: 2,
+        value: "2".to_string(),
     };
     let resp = instance.handle_event(&evt_gen).expect("Failed to switch to generator");
     if let UiResponse::UpdateView(view) = resp {

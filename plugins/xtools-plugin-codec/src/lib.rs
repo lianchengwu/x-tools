@@ -1,8 +1,10 @@
+pub mod checksum;
 pub mod codec_ops;
 pub mod id_gen;
 pub mod jwt;
 
-use codec_ops::{CODEC_KINDS, CodecKind, decode, empty_input, encode};
+use checksum::{HASH_ALGOS, HashAlgo, digest_hex};
+use codec_ops::{CodecKind, decode, empty_input, encode};
 use id_gen::{GeneratorConfig, ID_KINDS, IdKind, generate};
 use serde::{Deserialize, Serialize};
 use xtools_sdk::*;
@@ -12,6 +14,10 @@ pub struct CodecPlugin {
     pub input: String,
     pub output: String,
     pub kind_index: usize,
+    #[serde(default)]
+    pub format_index: usize,
+    #[serde(default)]
+    pub hash_index: usize,
     pub error: Option<String>,
     pub status: String,
     #[serde(default)]
@@ -44,9 +50,59 @@ fn default_true() -> bool {
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolMode {
+    Codec,
+    Jwt,
+    Generator,
+    Checksum,
+}
+
+const TOOL_MODES: [ToolMode; 4] = [
+    ToolMode::Codec,
+    ToolMode::Jwt,
+    ToolMode::Generator,
+    ToolMode::Checksum,
+];
+
+const CODEC_FORMATS: [CodecKind; 6] = [
+    CodecKind::Unicode,
+    CodecKind::Utf8,
+    CodecKind::Url,
+    CodecKind::Hex,
+    CodecKind::Base64,
+    CodecKind::Case,
+];
+
+impl ToolMode {
+    pub fn from_index(index: usize) -> Self {
+        TOOL_MODES.get(index).copied().unwrap_or(ToolMode::Codec)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ToolMode::Codec => "编解码",
+            ToolMode::Jwt => "JWT",
+            ToolMode::Generator => "随机与ID",
+            ToolMode::Checksum => "校验和",
+        }
+    }
+}
+
 impl CodecPlugin {
-    pub fn kind(&self) -> CodecKind {
-        CodecKind::from_index(self.kind_index)
+    pub fn mode(&self) -> ToolMode {
+        ToolMode::from_index(self.kind_index)
+    }
+
+    pub fn format(&self) -> CodecKind {
+        CODEC_FORMATS
+            .get(self.format_index)
+            .copied()
+            .unwrap_or(CodecKind::Unicode)
+    }
+
+    pub fn hash_algo(&self) -> HashAlgo {
+        HashAlgo::from_index(self.hash_index)
     }
 
     pub fn gen_kind(&self) -> IdKind {
@@ -81,6 +137,29 @@ impl CodecPlugin {
         self.status = format!("已生成{count_str} · {}", cfg.kind.label());
         Ok(UiResponse::UpdateView(self.render()))
     }
+
+    fn status_hint(&self) -> String {
+        match self.mode() {
+            ToolMode::Codec => self.format().hint().to_string(),
+            ToolMode::Jwt => CodecKind::Jwt.hint().to_string(),
+            ToolMode::Generator => CodecKind::Generator.hint().to_string(),
+            ToolMode::Checksum => self.hash_algo().hint().to_string(),
+        }
+    }
+
+    fn compute_checksum(&mut self) -> Result<UiResponse, String> {
+        if empty_input(&self.input) {
+            self.error = Some("先输入要转换的文字。".to_string());
+            return Ok(UiResponse::UpdateView(self.render()));
+        }
+        let algo = self.hash_algo();
+        let hex = digest_hex(algo, &self.input);
+        let hex_len = hex.len();
+        self.output = hex;
+        self.error = None;
+        self.status = format!("已计算 · {} · {hex_len} hex", algo.label());
+        Ok(UiResponse::UpdateView(self.render()))
+    }
 }
 
 impl XPlugin for CodecPlugin {
@@ -89,7 +168,7 @@ impl XPlugin for CodecPlugin {
             id: "xtools.codec".to_string(),
             name: "编码解码".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            description: "Unicode、UTF-8、URL、Hex、Base64、JWT 编解码与随机数、密码、UUIDv7、NanoID 等 ID 生成".to_string(),
+            description: "Unicode、UTF-8、URL、Hex、Base64、JWT、大小写编解码，以及 MD5 / SHA 校验和与 ID 生成".to_string(),
             author: "xtools".to_string(),
             mark: "码".to_string(),
             icon_svg: None,
@@ -108,6 +187,8 @@ impl XPlugin for CodecPlugin {
             input: String::new(),
             output: String::new(),
             kind_index: 0,
+            format_index: 0,
+            hash_index: 0,
             error: None,
             status: CodecKind::Unicode.hint().to_string(),
             gen_kind_index: 0,
@@ -122,14 +203,14 @@ impl XPlugin for CodecPlugin {
     }
 
     fn render(&self) -> UiView {
-        let kind = self.kind();
-        let kind_options: Vec<SelectOption> = CODEC_KINDS
+        let mode = self.mode();
+        let kind_options: Vec<SelectOption> = TOOL_MODES
             .iter()
             .enumerate()
-            .map(|(i, k)| SelectOption::new(i.to_string(), k.label()))
+            .map(|(i, m)| SelectOption::new(i.to_string(), m.label()))
             .collect();
 
-        if kind == CodecKind::Generator {
+        if mode == ToolMode::Generator {
             let gen_kind = self.gen_kind();
             let gen_kind_options: Vec<SelectOption> = ID_KINDS
                 .iter()
@@ -249,10 +330,10 @@ impl XPlugin for CodecPlugin {
             select("select_kind", kind_options, self.kind_index),
         ]));
 
-        let placeholder = if kind == CodecKind::Jwt {
-            "输入或粘贴 JWT 字符串（如 eyJhbGci... 或 Bearer eyJ...）进行解析，或输入 JSON 进行编码…"
-        } else {
-            "输入或粘贴要转换的文本…"
+        let placeholder = match mode {
+            ToolMode::Jwt => "输入或粘贴 JWT 字符串（如 eyJhbGci... 或 Bearer eyJ...）进行解析，或输入 JSON 进行编码…",
+            ToolMode::Checksum => "输入要计算校验和的文本…",
+            _ => "输入或粘贴要转换的文本…",
         };
 
         children.push(UiNode::TextInput {
@@ -267,24 +348,49 @@ impl XPlugin for CodecPlugin {
             monospace: true,
         });
 
-        let (btn1, btn2) = if kind == CodecKind::Jwt {
-            (
-                primary_button("btn_decode", kind.decode_label()),
-                button("btn_encode", kind.encode_label()),
-            )
-        } else {
-            (
-                primary_button("btn_encode", kind.encode_label()),
-                button("btn_decode", kind.decode_label()),
-            )
-        };
+        if mode == ToolMode::Codec {
+            let format_options: Vec<SelectOption> = CODEC_FORMATS
+                .iter()
+                .enumerate()
+                .map(|(i, k)| SelectOption::new(i.to_string(), k.label()))
+                .collect();
+            children.push(row(vec![
+                label("格式:"),
+                select("select_format", format_options, self.format_index),
+                spacer(),
+            ]));
+        } else if mode == ToolMode::Checksum {
+            let hash_options: Vec<SelectOption> = HASH_ALGOS
+                .iter()
+                .enumerate()
+                .map(|(i, a)| SelectOption::new(i.to_string(), a.label()))
+                .collect();
+            children.push(row(vec![
+                label("算法:"),
+                select("select_hash", hash_options, self.hash_index),
+                spacer(),
+            ]));
+        }
 
-        children.push(row(vec![
-            btn1,
-            btn2,
-            button("btn_swap", "⇄"),
-            spacer(),
-        ]));
+        let actions = if mode == ToolMode::Checksum {
+            vec![primary_button("btn_encode", "⚡ 计算"), spacer()]
+        } else if mode == ToolMode::Jwt {
+            vec![
+                primary_button("btn_decode", CodecKind::Jwt.decode_label()),
+                button("btn_encode", CodecKind::Jwt.encode_label()),
+                button("btn_swap", "⇄"),
+                spacer(),
+            ]
+        } else {
+            let format = self.format();
+            vec![
+                primary_button("btn_encode", format.encode_label()),
+                button("btn_decode", format.decode_label()),
+                button("btn_swap", "⇄"),
+                spacer(),
+            ]
+        };
+        children.push(row(actions));
 
         children.push(label("输出 (Output)"));
         children.push(UiNode::TextInput {
@@ -321,7 +427,7 @@ impl XPlugin for CodecPlugin {
                 "btn_gen_5" => self.perform_generate(Some(5)),
                 "btn_gen_10" => self.perform_generate(Some(10)),
                 "btn_swap" => {
-                    if self.kind() != CodecKind::Generator {
+                    if !matches!(self.mode(), ToolMode::Generator | ToolMode::Checksum) {
                         std::mem::swap(&mut self.input, &mut self.output);
                     }
                     self.error = None;
@@ -331,7 +437,7 @@ impl XPlugin for CodecPlugin {
                     self.input.clear();
                     self.output.clear();
                     self.error = None;
-                    self.status = self.kind().hint().to_string();
+                    self.status = self.status_hint();
                     Ok(UiResponse::UpdateView(self.render()))
                 }
                 "btn_copy" => {
@@ -379,11 +485,27 @@ impl XPlugin for CodecPlugin {
                 "select_kind" => {
                     self.kind_index = index;
                     self.error = None;
-                    self.status = self.kind().hint().to_string();
-                    if self.kind() == CodecKind::Generator && self.output.is_empty() {
+                    self.status = self.status_hint();
+                    if self.mode() == ToolMode::Generator && self.output.is_empty() {
                         return self.perform_generate(None);
                     }
                     Ok(UiResponse::UpdateView(self.render()))
+                }
+                "select_format" => {
+                    self.format_index = index;
+                    self.error = None;
+                    self.status = self.status_hint();
+                    Ok(UiResponse::UpdateView(self.render()))
+                }
+                "select_hash" => {
+                    self.hash_index = index;
+                    self.error = None;
+                    if empty_input(&self.input) {
+                        self.status = self.status_hint();
+                        Ok(UiResponse::UpdateView(self.render()))
+                    } else {
+                        self.compute_checksum()
+                    }
                 }
                 "select_gen_kind" => {
                     self.gen_kind_index = index;
@@ -422,14 +544,28 @@ impl XPlugin for CodecPlugin {
 
 impl CodecPlugin {
     fn convert(&mut self, encoding: bool) -> Result<UiResponse, String> {
-        let kind = self.kind();
-        if kind == CodecKind::Generator {
-            return self.perform_generate(if encoding { None } else { Some(5) });
+        match self.mode() {
+            ToolMode::Generator => {
+                return self.perform_generate(if encoding { None } else { Some(5) });
+            }
+            ToolMode::Checksum => {
+                if !encoding {
+                    self.error = Some("校验和不可逆，不能解码。".to_string());
+                    return Ok(UiResponse::UpdateView(self.render()));
+                }
+                return self.compute_checksum();
+            }
+            ToolMode::Jwt | ToolMode::Codec => {}
         }
         if empty_input(&self.input) {
             self.error = Some("先输入要转换的文字。".to_string());
             return Ok(UiResponse::UpdateView(self.render()));
         }
+        let kind = if self.mode() == ToolMode::Jwt {
+            CodecKind::Jwt
+        } else {
+            self.format()
+        };
         let result = if encoding {
             encode(kind, &self.input)
         } else {
@@ -439,18 +575,16 @@ impl CodecPlugin {
             Ok(out) => {
                 self.output = out;
                 self.error = None;
-                self.status = if encoding {
-                    if kind == CodecKind::Jwt {
+                self.status = if self.mode() == ToolMode::Jwt {
+                    if encoding {
                         "已生成 · JWT".to_string()
                     } else {
-                        format!("已{} · {}", kind.encode_label(), kind.label())
-                    }
-                } else {
-                    if kind == CodecKind::Jwt {
                         "已解析 · JWT".to_string()
-                    } else {
-                        format!("已{} · {}", kind.decode_label(), kind.label())
                     }
+                } else if encoding {
+                    format!("已{} · {}", kind.encode_label(), kind.label())
+                } else {
+                    format!("已{} · {}", kind.decode_label(), kind.label())
                 };
             }
             Err(e) => {
@@ -512,12 +646,12 @@ mod tests {
         let mut plugin = CodecPlugin::init().unwrap();
         plugin
             .handle_event(UiEvent::SelectChanged {
-                id: "select_kind".into(),
-                index: 6,
-                value: "6".into(),
+                id: "select_format".into(),
+                index: 5,
+                value: "5".into(),
             })
             .unwrap();
-        assert_eq!(plugin.kind(), CodecKind::Case);
+        assert_eq!(plugin.format(), CodecKind::Case);
         plugin.input = "Hello".into();
         plugin
             .handle_event(UiEvent::Click {
@@ -553,7 +687,7 @@ mod tests {
         let mut plugin = CodecPlugin::init().unwrap();
         plugin
             .handle_event(UiEvent::SelectChanged {
-                id: "select_kind".into(),
+                id: "select_format".into(),
                 index: 4,
                 value: "4".into(),
             })
@@ -581,11 +715,11 @@ mod tests {
         plugin
             .handle_event(UiEvent::SelectChanged {
                 id: "select_kind".into(),
-                index: 7,
-                value: "7".into(),
+                index: 2,
+                value: "2".into(),
             })
             .unwrap();
-        assert_eq!(plugin.kind(), CodecKind::Generator);
+        assert_eq!(plugin.mode(), ToolMode::Generator);
         assert_eq!(plugin.gen_kind(), IdKind::Password);
         assert!(!plugin.output.is_empty());
         assert_eq!(plugin.output.len(), 16);
@@ -610,7 +744,7 @@ mod tests {
     #[test]
     fn generator_random_number_custom_length() {
         let mut plugin = CodecPlugin::init().unwrap();
-        plugin.kind_index = 7;
+        plugin.kind_index = 2;
         plugin
             .handle_event(UiEvent::SelectChanged {
                 id: "select_gen_kind".into(),
@@ -637,7 +771,7 @@ mod tests {
     #[test]
     fn generator_uuidv7_and_nanoid_and_snowflake() {
         let mut plugin = CodecPlugin::init().unwrap();
-        plugin.kind_index = 7;
+        plugin.kind_index = 2;
 
         // UUIDv7 (index 2)
         plugin
@@ -677,7 +811,7 @@ mod tests {
     #[test]
     fn generator_batch_count() {
         let mut plugin = CodecPlugin::init().unwrap();
-        plugin.kind_index = 7;
+        plugin.kind_index = 2;
         plugin.gen_kind_index = 2; // UUIDv7
         plugin
             .handle_event(UiEvent::Click {
@@ -698,11 +832,11 @@ mod tests {
         plugin
             .handle_event(UiEvent::SelectChanged {
                 id: "select_kind".into(),
-                index: 5,
-                value: "5".into(),
+                index: 1,
+                value: "1".into(),
             })
             .unwrap();
-        assert_eq!(plugin.kind(), CodecKind::Jwt);
+        assert_eq!(plugin.mode(), ToolMode::Jwt);
 
         // Input token with Bearer prefix
         plugin
@@ -742,5 +876,67 @@ mod tests {
         assert!(reparsed.contains("SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"));
         assert!(reparsed.contains("算法 (alg): HS256"));
         assert_eq!(plugin.status, "已生成 · JWT");
+    }
+
+    #[test]
+    fn four_modes_and_format_switch_keep_codecs() {
+        let plugin = CodecPlugin::init().unwrap();
+        let view = serde_json::to_string(&plugin.render()).unwrap();
+        assert!(view.contains("编解码"), "{view}");
+        assert!(view.contains("校验和"), "{view}");
+        assert!(view.contains("select_format"), "{view}");
+
+        let mut plugin = plugin;
+        plugin
+            .handle_event(UiEvent::SelectChanged {
+                id: "select_format".into(),
+                index: 4,
+                value: "4".into(),
+            })
+            .unwrap();
+        plugin.input = "hello".into();
+        plugin
+            .handle_event(UiEvent::Click {
+                id: "btn_encode".into(),
+            })
+            .unwrap();
+        assert_eq!(plugin.output, "aGVsbG8=");
+    }
+
+    #[test]
+    fn checksum_computes_md5_then_sha256_without_trimming() {
+        let mut plugin = CodecPlugin::init().unwrap();
+        plugin
+            .handle_event(UiEvent::SelectChanged {
+                id: "select_kind".into(),
+                index: 3,
+                value: "3".into(),
+            })
+            .unwrap();
+        plugin.input = " abc".into();
+        plugin
+            .handle_event(UiEvent::Click {
+                id: "btn_encode".into(),
+            })
+            .unwrap();
+        assert_eq!(plugin.output, "12cfaf7fd98f33be8038b3d56c18f061");
+        assert_eq!(plugin.status, "已计算 · MD5 · 32 hex");
+        let view = serde_json::to_string(&plugin.render()).unwrap();
+        assert!(view.contains("select_hash"), "{view}");
+        assert!(!view.contains("btn_decode"), "{view}");
+        assert!(!view.contains("btn_swap"), "{view}");
+
+        plugin
+            .handle_event(UiEvent::SelectChanged {
+                id: "select_hash".into(),
+                index: 2,
+                value: "2".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            plugin.output,
+            "d92b1cb3a32147b86a4db0647e4bf6eda6cf160fd3b2da264c5b088c9f9ccbfa"
+        );
+        assert_eq!(plugin.status, "已计算 · SHA-256 · 64 hex");
     }
 }

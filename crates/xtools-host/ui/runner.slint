@@ -483,7 +483,11 @@ export component RunnerWindow inherits Window {
     in-out property <string> codec-input: "";
     in-out property <string> codec-output: "";
     in-out property <int> codec-kind-index: 0;
-    in-out property <[string]> codec-options: ["Unicode", "UTF-8", "URL", "Hex", "Base64", "JWT", "大小写", "随机与ID"];
+    in-out property <[string]> codec-options: ["编解码", "JWT", "随机与ID", "校验和"];
+    in-out property <int> codec-format-index: 0;
+    in-out property <[string]> codec-format-options: ["Unicode", "UTF-8", "URL", "Hex", "Base64", "大小写"];
+    in-out property <int> codec-hash-index: 0;
+    in-out property <[string]> codec-hash-options: ["MD5", "SHA-1", "SHA-256", "SHA-512"];
     in-out property <bool> codec-copied: false;
     in-out property <string> codec-error: "";
     in-out property <string> codec-status: "Unicode：文本 ↔ \\uXXXX";
@@ -508,6 +512,8 @@ export component RunnerWindow inherits Window {
     callback codec-copy-item(int, string);
     callback codec-input-edited(string);
     callback codec-kind-changed(int);
+    callback codec-format-changed(int);
+    callback codec-hash-changed(int);
     callback codec-gen-kind-changed(int);
     callback codec-gen-length-edited(string);
     callback codec-gen-count-edited(string);
@@ -604,7 +610,7 @@ export component RunnerWindow inherits Window {
                     return accept;
                 }
                 if (root.plugin-kind == "codec") {
-                    if (root.codec-kind-index == 5) {
+                    if (root.codec-kind-index == 1) {
                         root.codec-decode();
                     } else {
                         root.codec-encode();
@@ -1616,8 +1622,35 @@ export component RunnerWindow inherits Window {
                     }
                 }
 
-                // 2a. 编码解码模式：输入区标题与快捷键提示
-                if root.codec-kind-index != 7 : HorizontalLayout {
+                // 格式 / 算法，位于输入框上方
+                if root.codec-kind-index == 0 || root.codec-kind-index == 3 : HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+
+                    Text {
+                        text: root.codec-kind-index == 3 ? "算法:" : "格式:";
+                        font-size: Theme.font-size-small;
+                        font-weight: 600;
+                        color: Theme.muted;
+                        vertical-alignment: center;
+                    }
+
+                    if root.codec-kind-index == 0 : DropdownSelector {
+                        options: root.codec-format-options;
+                        selected-index <=> root.codec-format-index;
+                        selector-width: 140px;
+                        selection-changed(idx) => { root.codec-format-changed(idx); }
+                    }
+
+                    if root.codec-kind-index == 3 : DropdownSelector {
+                        options: root.codec-hash-options;
+                        selected-index <=> root.codec-hash-index;
+                        selector-width: 140px;
+                        selection-changed(idx) => { root.codec-hash-changed(idx); }
+                    }
+                }
+
+                if root.codec-kind-index != 2 : HorizontalLayout {
                     alignment: space-between;
 
                     Text {
@@ -1629,41 +1662,42 @@ export component RunnerWindow inherits Window {
                     }
 
                     Text {
-                        text: root.codec-kind-index == 5 ? "Ctrl+Enter 快捷解析" : "Ctrl+Enter 快捷转换";
+                        text: root.codec-kind-index == 1 ? "Ctrl+Enter 快捷解析" : (root.codec-kind-index == 3 ? "Ctrl+Enter 计算校验和" : "Ctrl+Enter 快捷转换");
                         font-size: 11px;
                         color: Theme.muted;
                         vertical-alignment: center;
                     }
                 }
 
-                if root.codec-kind-index != 7 : MultilineEditor {
+                if root.codec-kind-index != 2 : MultilineEditor {
                     text <=> root.codec-input;
                     vertical-stretch: 1;
                     edited(t) => { root.codec-input-edited(t); }
                 }
 
-                // 3a. 编码解码模式：转换动作条
-                if root.codec-kind-index != 7 : HorizontalLayout {
+
+                // 3a. 编码解码 / 校验和动作条
+                if root.codec-kind-index != 2 : HorizontalLayout {
                     spacing: 8px;
                     alignment: stretch;
 
                     ActionButton {
-                        text: root.codec-kind-index == 6 ? "大写" : (root.codec-kind-index == 5 ? "⚡ 编码" : "⚡ 编码");
-                        is-primary: root.codec-kind-index != 5;
+                        text: root.codec-kind-index == 3 ? "⚡ 计算" : (root.codec-kind-index == 0 && root.codec-format-index == 5 ? "大写" : "⚡ 编码");
+                        is-primary: root.codec-kind-index != 1;
                         min-btn-width: 76px;
                         enabled: root.codec-input != "";
                         clicked => { root.codec-encode(); }
                     }
 
-                    ActionButton {
-                        text: root.codec-kind-index == 6 ? "小写" : (root.codec-kind-index == 5 ? "🔍 解析" : "🔓 解码");
-                        is-primary: root.codec-kind-index == 5;
+                    if root.codec-kind-index != 3 : ActionButton {
+                        text: root.codec-kind-index == 0 && root.codec-format-index == 5 ? "小写" : (root.codec-kind-index == 1 ? "🔍 解析" : "🔓 解码");
+                        is-primary: root.codec-kind-index == 1;
                         min-btn-width: 76px;
                         enabled: root.codec-input != "";
                         clicked => { root.codec-decode(); }
                     }
 
-                    IconButton {
+                    if root.codec-kind-index != 3 : IconButton {
                         icon: "⇄";
                         enabled: root.codec-input != "" || root.codec-output != "";
                         clicked => { root.codec-swap(); }
@@ -1674,8 +1708,8 @@ export component RunnerWindow inherits Window {
                     }
                 }
 
-                // 2b. 随机与ID生成控制区 (当 root.codec-kind-index == 6)
-                if root.codec-kind-index == 7 : VerticalLayout {
+                // 2b. 随机与ID生成控制区
+                if root.codec-kind-index == 2 : VerticalLayout {
                     spacing: 8px;
 
                     HorizontalLayout {
@@ -1891,7 +1925,7 @@ export component RunnerWindow inherits Window {
 
                 // 4. 输出区
                 // 4a. 编解码模式输出：传统多行文本框
-                if root.codec-kind-index != 7 : VerticalLayout {
+                if root.codec-kind-index != 2 : VerticalLayout {
                     spacing: 8px;
                     vertical-stretch: 1;
 
@@ -1911,7 +1945,7 @@ export component RunnerWindow inherits Window {
                 }
 
                 // 4b. 随机与ID生成模式输出：单项点击即复制列表
-                if root.codec-kind-index == 7 : VerticalLayout {
+                if root.codec-kind-index == 2 : VerticalLayout {
                     spacing: 8px;
                     vertical-stretch: 1;
 
@@ -2146,7 +2180,7 @@ export component RunnerWindow inherits Window {
                     }
 
                     // 仅在编解码模式展示底部复制按钮，随机与ID生成模式下已支持点一下就复制单项
-                    if root.codec-kind-index != 7 : CopyButton {
+                    if root.codec-kind-index != 2 : CopyButton {
                         copied: root.codec-copied;
                         enabled: root.codec-output != "";
                         clicked => { root.codec-copy(); }
