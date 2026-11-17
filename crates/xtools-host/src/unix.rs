@@ -551,7 +551,9 @@ fn poll_shortcuts(host: &Rc<RefCell<ShortcutHost>>) {
     let mtime = std::fs::metadata(&path)
         .and_then(|meta| meta.modified())
         .ok();
-    if mtime.is_some() && mtime == host.mtime {
+    // 缺省（无配置文件）与已有 mtime 都必须短路，否则每秒都会全量扫描并编译
+    // WASM 插件（wasmtime），主线程被打满导致悬浮球点击无法响应。
+    if mtime == host.mtime {
         return;
     }
     let file = crate::shortcuts::ShortcutFile::load();
